@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/checkout@v4
+        with:
+          repository: aviutl2/aviutl2_sdk_mirror
+          path: build/aviutl2-sdk
+      - run: go test ./...
+      - run: go vet ./...
+      - run: >-
+          cmake -S plugin -B build/plugin
+          -DAVIUTL2_SDK_DIR="${{ github.workspace }}/build/aviutl2-sdk/include/aviutl2_sdk"
+      - run: cmake --build build/plugin --config Release
+      - run: ctest --test-dir build/plugin -C Release --output-on-failure

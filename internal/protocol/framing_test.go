@@ -28,3 +28,12 @@ func TestReadFrameRejectsOversize(t *testing.T) {
 		t.Fatalf("got %v, want ErrMessageTooLarge", err)
 	}
 }
+
+func FuzzReadFrame(f *testing.F) {
+	f.Add([]byte{0, 0, 0, 0})
+	f.Add([]byte{4, 0, 0, 0, 'p', 'i', 'n', 'g'})
+	f.Add([]byte{255, 255, 255, 255})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = ReadFrame(bytes.NewReader(data))
+	})
+}

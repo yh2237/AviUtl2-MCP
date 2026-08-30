@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(aviutl2_mcp_bridge LANGUAGES CXX)
 
+include(CTest)
+
 set(AVIUTL2_SDK_DIR "" CACHE PATH "Directory containing plugin2.h and logger2.h")
 if(NOT EXISTS "${AVIUTL2_SDK_DIR}/plugin2.h")
   message(FATAL_ERROR "Set AVIUTL2_SDK_DIR to the official AviUtl2 SDK header directory")
@@ -32,3 +34,14 @@ set_target_properties(aviutl2_mcp_bridge PROPERTIES
   SUFFIX ".aux2"
   OUTPUT_NAME "aviutl2-mcp-bridge"
 )
+
+if(BUILD_TESTING)
+  add_executable(aviutl2_mcp_bridge_test tests/bridge_test.cpp)
+  target_compile_features(aviutl2_mcp_bridge_test PRIVATE cxx_std_20)
+  target_include_directories(aviutl2_mcp_bridge_test PRIVATE "${AVIUTL2_SDK_DIR}")
+  target_link_libraries(aviutl2_mcp_bridge_test PRIVATE nlohmann_json::nlohmann_json ws2_32)
+  if(MSVC)
+    target_compile_options(aviutl2_mcp_bridge_test PRIVATE /W4 /EHsc /utf-8)
+  endif()
+  add_test(NAME bridge_dispatch COMMAND aviutl2_mcp_bridge_test)
+endif()

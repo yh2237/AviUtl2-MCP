@@ -2,6 +2,8 @@ notes/
 
 /bin/
 /build/
+/dist/
+/.tmp-go-cache/
 *.exe
 *.aux2
 *.dll

@@ -1,0 +1,10 @@
+AviUtl2 MCP
+
+Installs the native AviUtl2 bridge and the Go MCP server under:
+Plugin\AviUtl2-MCP
+
+After installation, configure your MCP client to launch aviutl2-mcp.exe from
+that directory. The server connects to the bridge on 127.0.0.1:28552 by default.
+
+This is an early release. Back up important projects before allowing automated
+editing.

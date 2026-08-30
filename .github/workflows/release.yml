@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/checkout@v4
+        with:
+          repository: aviutl2/aviutl2_sdk_mirror
+          path: build/aviutl2-sdk
+      - name: Build au2pkg
+        shell: pwsh
+        run: >-
+          ./scripts/package.ps1
+          -Version ("${{ github.ref_name }}".TrimStart('v'))
+          -AviUtl2SdkDir "${{ github.workspace }}/build/aviutl2-sdk/include/aviutl2_sdk"
+      - name: Checksum
+        shell: pwsh
+        run: Get-FileHash dist/*.zip -Algorithm SHA256 | Format-List
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

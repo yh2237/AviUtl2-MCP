@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -71,5 +72,95 @@ func TestClientPingAndGetContext(t *testing.T) {
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMutationSendsOptimisticContext(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer conn.Close()
+		payload, err := protocol.ReadFrame(conn)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		var req protocol.Request
+		if err := json.Unmarshal(payload, &req); err != nil {
+			serverDone <- err
+			return
+		}
+		if req.Method != "add_text" || req.Context == nil || req.Context.SessionID != "session-1" ||
+			req.Context.Generation == nil || *req.Context.Generation != 7 ||
+			req.Context.SceneID == nil || *req.Context.SceneID != 3 {
+			serverDone <- errors.New("mutation request did not contain expected context")
+			return
+		}
+		result := protocol.MutationResult{
+			Context: protocol.Context{SessionID: "session-1", Generation: 7, SceneID: 3},
+			Results: []protocol.OperationResult{{Index: 0, Op: "add_text", Changed: true}},
+		}
+		resultJSON, _ := json.Marshal(result)
+		responseJSON, _ := json.Marshal(protocol.Response{ID: req.ID, Version: protocol.Version, Result: resultJSON})
+		serverDone <- protocol.WriteFrame(conn, responseJSON)
+	}()
+
+	generation, sceneID := uint64(7), 3
+	client := NewClient(listener.Addr().String(), 2*time.Second)
+	defer client.Close()
+	result, err := client.AddText(context.Background(), protocol.AddTextParams{
+		Text: "hello", Layer: 0, Frame: 0, Length: 30, Size: 34, Color: "ffffff",
+	}, &protocol.ExpectedContext{SessionID: "session-1", Generation: &generation, SceneID: &sceneID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 || !result.Results[0].Changed {
+		t.Fatalf("unexpected mutation result: %+v", result)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoteErrorPreservesDetails(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		payload, _ := protocol.ReadFrame(conn)
+		var req protocol.Request
+		_ = json.Unmarshal(payload, &req)
+		details := json.RawMessage(`{"expected":4,"actual":5}`)
+		responseJSON, _ := json.Marshal(protocol.Response{
+			ID: req.ID, Version: protocol.Version,
+			Error: &protocol.Error{Code: "STALE_CONTEXT", Message: "changed", Details: details},
+		})
+		_ = protocol.WriteFrame(conn, responseJSON)
+	}()
+
+	client := NewClient(listener.Addr().String(), 2*time.Second)
+	defer client.Close()
+	_, err = client.GetContext(context.Background())
+	var remote *RemoteError
+	if !errors.As(err, &remote) || remote.Code != "STALE_CONTEXT" || len(remote.Details) == 0 {
+		t.Fatalf("unexpected error: %#v", err)
 	}
 }

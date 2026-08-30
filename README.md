@@ -12,15 +12,13 @@ MCP client --stdio--> aviutl2-mcp.exe --TCP--> aviutl2-mcp-bridge.aux2 --> AviUt
 
 ## Status
 
-Initial vertical slice:
+Phases 0 through 4 are implemented. The server can inspect a project, perform
+generation-guarded edits, batch related operations into one Undo unit, manage
+effects, inspect selection and media, and return PNG previews to an MCP client.
 
-- Go MCP server using the official MCP Go SDK
-- bounded length-prefixed JSON bridge protocol
-- `ping` and `get_context` tools
-- Go mock-bridge tests
-- native plugin skeleton using the official AviUtl2 SDK
-
-This is not yet ready for normal editing work.
+The bridge has automated tests against a fake SDK host, but still needs broader
+testing inside real AviUtl2 projects. Keep project backups and review generated
+operations before allowing an agent to edit important work.
 
 ## Go server
 
@@ -47,9 +45,25 @@ cmake --build build/plugin --config Release
 
 The build fetches `nlohmann/json` as a third-party build dependency.
 
+To build both programs and create an AviUtl2 package:
+
+```powershell
+.\scripts\package.ps1 `
+  -Version 0.1.0 `
+  -AviUtl2SdkDir C:\path\to\aviutl2_sdk\include\aviutl2_sdk
+```
+
+The package is written to `dist/AviUtl2-MCP-<version>.au2pkg.zip`. After
+installing it in AviUtl2, configure the MCP client to start
+`Plugin/AviUtl2-MCP/aviutl2-mcp.exe` beneath the AviUtl2 application-data
+directory.
+
 ## Protocol
 
 Each bridge message is a four-byte little-endian payload length followed by a
 UTF-8 JSON document. Payloads are limited to 4 MiB. See
 [`internal/protocol`](internal/protocol) for the source-of-truth DTOs and
 framing behavior.
+
+See [Tool reference](docs/TOOLS.md), [Bridge protocol](docs/PROTOCOL.md), and
+[development notes](docs/DEVELOPMENT.md) for the implemented surface.
