@@ -20,6 +20,18 @@ jobs:
         with:
           repository: aviutl2/aviutl2_sdk_mirror
           path: build/aviutl2-sdk
+      - name: Test Go server
+        run: go test ./...
+      - name: Vet Go server
+        run: go vet ./...
+      - name: Configure native bridge against latest SDK
+        run: >-
+          cmake -S plugin -B build/verify
+          -DAVIUTL2_SDK_DIR="${{ github.workspace }}/build/aviutl2-sdk/include/aviutl2_sdk"
+      - name: Build native bridge and tests
+        run: cmake --build build/verify --config Release
+      - name: Test native bridge
+        run: ctest --test-dir build/verify -C Release --output-on-failure
       - name: Build au2pkg
         shell: pwsh
         run: >-

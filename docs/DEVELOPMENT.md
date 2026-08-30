@@ -22,6 +22,13 @@ The C++ test includes the production dispatch implementation and supplies a
 small fake `EDIT_HANDLE`. It checks both happy paths and stale-context rejection
 without launching AviUtl2.
 
+The `CI` GitHub Actions workflow is manual (`workflow_dispatch`) so ordinary
+commits do not consume a Windows runner. Pushing a `v*` tag runs the `Release`
+workflow against the latest default branch of the official SDK mirror. The
+package and GitHub Release are created only after Go tests, `go vet`, the native
+build, and the fake-host test all succeed. A failed run leaves the Git tag in
+place but publishes no Release assets.
+
 ## Architecture boundaries
 
 The native `.aux2` bridge owns SDK calls and loopback IPC. It does not interpret
