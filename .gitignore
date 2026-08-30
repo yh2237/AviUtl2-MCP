@@ -1,0 +1,16 @@
+notes/
+
+/bin/
+/build/
+*.exe
+*.aux2
+*.dll
+*.exp
+*.lib
+*.obj
+*.pdb
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
