@@ -1,13 +1,13 @@
-# Development
+# 開発
 
-## Requirements
+## 必要なもの
 
-- Go 1.25 or newer
-- Windows x64 and Visual Studio 2022 C++ tools
-- CMake 3.24 or newer
-- official AviUtl2 Plugin SDK headers
+- Go 1.25以上
+- Windows x64 / Visual Studio 2022
+- CMake 3.24以上
+- AviUtl2 Plugin SDK
 
-## Verification
+## テスト
 
 ```powershell
 go test ./...
@@ -18,23 +18,14 @@ cmake --build build/plugin --config Release
 ctest --test-dir build/plugin -C Release --output-on-failure
 ```
 
-The C++ test includes the production dispatch implementation and supplies a
-small fake `EDIT_HANDLE`. It checks both happy paths and stale-context rejection
-without launching AviUtl2.
+C++テストは模擬`EDIT_HANDLE`を使うため、AviUtl2を起動せず実行できます。
 
-The `CI` GitHub Actions workflow is manual (`workflow_dispatch`) so ordinary
-commits do not consume a Windows runner. Pushing a `v*` tag runs the `Release`
-workflow against the latest default branch of the official SDK mirror. The
-package and GitHub Release are created only after Go tests, `go vet`, the native
-build, and the fake-host test all succeed. A failed run leaves the Git tag in
-place but publishes no Release assets.
+## CIとリリース
 
-## Architecture boundaries
+通常のpushではCIを実行しません。`CI`ワークフローは手動実行できます。
 
-The native `.aux2` bridge owns SDK calls and loopback IPC. It does not interpret
-MCP. The Go process owns MCP schemas, validation, workflow descriptions, image
-encoding, and future policy. This keeps native code small and lets most behavior
-be tested without loading the editor.
+`v*`タグをpushすると、最新のSDKミラーでGo/C++を検証します。全テスト成功後に限り、`.au2pkg.zip`をGitHub Releaseへ公開します。失敗時はタグだけが残ります。
 
-Do not persist object IDs. SDK object handles are represented by an in-memory
-registry and discarded when project/scene lifecycle events change generation.
+## 設計上の境界
+
+C++側はSDKとIPC、Go側はMCP・検証・PNG変換を担当します。object IDはプロセス内の一時IDで、プロジェクトまたはシーン変更時に失効します。

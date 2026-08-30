@@ -1,32 +1,21 @@
-# Native bridge protocol
+# 内部プロトコル
 
-The Go server connects to `127.0.0.1:28552` by default. Each message consists of
-a four-byte little-endian unsigned payload length followed by one UTF-8 JSON
-document. Requests and responses are limited to 4 MiB.
-
-A request contains a unique `id`, a `method`, optional `params`, and, for
-mutations, an expected context:
+Goサーバーは既定で`127.0.0.1:28552`へ接続します。通信形式は「4バイトlittle-endianの長さ + UTF-8 JSON」で、上限は4 MiBです。
 
 ```json
 {
-  "id": "1",
+  "id": 1,
+  "version": 1,
   "method": "delete_object",
   "context": {
-    "session_id": "opaque-session",
+    "session_id": "session",
     "generation": 4,
     "scene_id": 0
   },
-  "params": { "object_id": "opaque-object" }
+  "params": { "object_id": 12 }
 }
 ```
 
-Successful responses contain a method-specific `result`. Errors contain an
-`error` object with a stable `code`, human-readable `message`, retry hint, and
-optional structured `details`.
+成功時は`result`、失敗時は`error`を返します。変更操作では`session_id`、`generation`、`scene_id`を照合し、古いコンテキストからの編集を拒否します。
 
-The session changes when the native bridge is reloaded. The generation changes
-when a project is loaded or the active scene changes. These tokens prevent a
-delayed MCP call from editing a different context than the one inspected.
-
-The wire schema is internal and may change before a stable release. Go DTOs in
-`internal/protocol` are the source of truth.
+安定版前の内部仕様です。正確な定義は`internal/protocol`を参照してください。

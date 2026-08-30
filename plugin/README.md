@@ -1,25 +1,15 @@
-# Native bridge
+# ネイティブブリッジ
 
-This directory contains the small native half of AviUtl2 MCP. It is an
-independent implementation against the official AviUtl2 Plugin SDK.
+AviUtl2公式Plugin SDKとGo製MCPサーバーをつなぐ`.aux2`プラグインです。SDK呼び出し、loopback IPC、値の変換だけを担当します。
 
-Responsibilities are intentionally limited to:
+## ビルド
 
-- plugin lifecycle and `EDIT_HANDLE` access;
-- bounded, length-prefixed loopback IPC;
-- conversion between SDK values and protocol DTOs;
-- host-safe exception and socket handling.
-
-MCP behavior and editing workflows belong in the Go process.
-
-## Build requirements
+必要なもの:
 
 - Windows x64
-- MSVC with C++20 support
-- CMake 3.24 or newer
-- official AviUtl2 Plugin SDK headers
-
-Configure with the directory that directly contains `plugin2.h`:
+- MSVC（C++20）
+- CMake 3.24以上
+- AviUtl2 Plugin SDK
 
 ```powershell
 cmake -S plugin -B build/plugin `
@@ -27,4 +17,4 @@ cmake -S plugin -B build/plugin `
 cmake --build build/plugin --config Release
 ```
 
-The resulting file is named `aviutl2-mcp-bridge.aux2`.
+出力は`aviutl2-mcp-bridge.aux2`です。

@@ -1,53 +1,30 @@
-# MCP tool reference
+# MCPツール
 
-All mutating tools require `session_id`, `generation`, and `scene_id` from a
-recent `get_context` result. The bridge rejects the operation if the project or
-scene changed. Refresh context and inspect the affected objects before retrying.
+変更操作には、直前の`get_context`で得た`session_id`、`generation`、`scene_id`が必要です。object IDも同じセッション・generation内でのみ有効です。
 
-Object IDs are opaque and valid only for the current bridge session and
-generation.
+## 取得
 
-## Connection and inspection
+- `ping`: 接続確認
+- `get_context`: シーン、カーソル、選択範囲などを取得
+- `inspect_timeline`: 指定範囲のレイヤーとobjectを取得
+- `inspect_object`: objectの詳細を取得
+- `get_selection`: 選択中のobjectを取得
+- `list_effects`: エフェクト一覧を取得
+- `list_effect_items`: エフェクトの設定項目を取得
+- `preflight_media`: メディア対応可否と情報を確認
+- `render_preview`: シーンまたはobjectをPNGで取得
 
-- `ping`: reports whether the AviUtl2 bridge is reachable.
-- `get_context`: returns project/session identity, generation, scene, cursor,
-  selection range, display range, and video dimensions.
-- `inspect_timeline`: returns objects and layer state in a bounded frame/layer
-  range.
-- `inspect_object`: returns placement, sections, aliases, and effect state for
-  one object.
-- `get_selection`: returns the focused object and selected objects.
-- `list_effects`: enumerates effects registered with AviUtl2.
-- `list_effect_items`: enumerates configurable items for an effect.
-- `preflight_media`: asks AviUtl2 whether a file is supported and returns media
-  metadata without changing the project.
-- `render_preview`: renders a scene or object at one frame. The MCP result is a
-  PNG image and is limited to 800 pixels on its longest edge.
+## 編集
 
-## Editing
+- `add_text`: テキストを追加
+- `add_media`: メディアを追加
+- `update_object`: 位置・名前・設定値を変更
+- `delete_object`: objectを削除
+- `add_effect` / `delete_effect` / `set_effect_state`: エフェクトを編集
+- `execute_batch`: 最大100操作を1つのUndo単位で実行
 
-- `add_text`: creates and configures a text object.
-- `add_media`: creates an object from a local media file.
-- `update_object`: changes placement, name, or property values in one Undo
-  unit.
-- `delete_object`: removes an object.
-- `add_effect`, `delete_effect`, `set_effect_state`: manage object effects.
-- `execute_batch`: runs up to 100 supported edits in one AviUtl2 edit section
-  and therefore one Undo unit. A later operation may refer to an object created
-  earlier in the same batch through `result_ref`.
+`execute_batch`はトランザクションではありません。途中で失敗した場合、それ以前の変更は残ることがあります。
 
-`execute_batch` is not a transaction: if operation N fails, operations before N
-may remain applied. Use AviUtl2 Undo or explicitly repair the project after a
-partial failure.
+## 注意
 
-## Recommended agent flow
-
-1. Call `ping`, then `get_context`.
-2. Inspect the target timeline range or object.
-3. Preflight media and discover effect/item names when relevant.
-4. Submit the smallest useful edit or batch using the exact context tokens.
-5. Refresh context and inspect or render the result.
-
-The bridge binds only to loopback and has no client authentication or filesystem
-sandbox of its own. Any local process can connect to the port, and `add_media`
-can open any path accessible to the AviUtl2 process.
+ブリッジはloopback専用ですが認証機能はありません。同じPC上のプロセスは接続でき、`add_media`はAviUtl2から読めるローカルファイルへアクセスできます。
