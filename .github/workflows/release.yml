@@ -12,11 +12,11 @@ jobs:
   package:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: aviutl2/aviutl2_sdk_mirror
           path: build/aviutl2-sdk
