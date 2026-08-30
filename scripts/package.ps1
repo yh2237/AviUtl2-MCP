@@ -60,7 +60,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "package/package.txt") -Destinati
 
 $packageIni = Join-Path $stagePath "package.ini"
 $packageIniContent = (Get-Content -LiteralPath $packageIni -Raw).Replace(
-    "information=AviUtl2 MCP bridge and Go MCP server",
+    "information=AviUtl2 MCPブリッジとGo MCPサーバー",
     "information=AviUtl2 MCP $Version by yh2237"
 )
 [System.IO.File]::WriteAllText(
