@@ -58,6 +58,14 @@ func (c *Client) InspectObject(ctx context.Context, params protocol.InspectObjec
 	return call[protocol.ObjectResult](c, ctx, "inspect_object", params, nil)
 }
 
+func (c *Client) InspectObjects(ctx context.Context, params protocol.InspectObjectsParams) (protocol.ObjectsResult, error) {
+	return call[protocol.ObjectsResult](c, ctx, "inspect_objects", params, nil)
+}
+
+func (c *Client) InspectObjectValues(ctx context.Context, params protocol.InspectObjectValuesParams) (protocol.ObjectValuesResult, error) {
+	return call[protocol.ObjectValuesResult](c, ctx, "inspect_object_values", params, nil)
+}
+
 func (c *Client) ListEffects(ctx context.Context) ([]protocol.EffectDefinition, error) {
 	return call[[]protocol.EffectDefinition](c, ctx, "list_effects", struct{}{}, nil)
 }

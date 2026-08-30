@@ -72,6 +72,25 @@ type objectOutput struct {
 	Object protocol.ObjectResult `json:"object"`
 }
 
+type inspectObjectsInput struct {
+	ObjectIDs      []uint64 `json:"object_ids" jsonschema:"one to one hundred session-local object ids"`
+	IncludeAlias   bool     `json:"include_alias,omitempty"`
+	IncludeEffects bool     `json:"include_effects,omitempty"`
+}
+
+type objectsOutput struct {
+	Objects protocol.ObjectsResult `json:"objects"`
+}
+
+type inspectObjectValuesInput struct {
+	ObjectID uint64   `json:"object_id" jsonschema:"session-local object id"`
+	Frame    *float64 `json:"frame,omitempty" jsonschema:"frame used to sample animated values; defaults to object start"`
+}
+
+type objectValuesOutput struct {
+	Values protocol.ObjectValuesResult `json:"values"`
+}
+
 type effectsOutput struct {
 	Effects []protocol.EffectDefinition `json:"effects"`
 }
@@ -127,6 +146,14 @@ type updateObjectInput struct {
 type deleteObjectInput struct {
 	mutationContext
 	ObjectID uint64 `json:"object_id"`
+}
+
+type duplicateObjectsInput struct {
+	mutationContext
+	ObjectIDs   []uint64 `json:"object_ids" jsonschema:"objects to duplicate"`
+	FrameOffset int      `json:"frame_offset" jsonschema:"frame offset applied for each repetition"`
+	LayerOffset int      `json:"layer_offset,omitempty" jsonschema:"layer offset applied for each repetition"`
+	Repeat      int      `json:"repeat,omitempty" jsonschema:"number of copies, default 1 and maximum 20"`
 }
 
 type effectMutationInput struct {
@@ -201,6 +228,24 @@ func New(client *bridge.Client, version string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectInput) (*mcp.CallToolResult, objectOutput, error) {
 			result, err := client.InspectObject(ctx, protocol.InspectObjectParams(input))
 			return nil, objectOutput{Object: result}, err
+		})
+
+	mcp.AddTool(server, &mcp.Tool{Name: "inspect_objects", Description: "Inspect up to one hundred objects in one bridge read section."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectsInput) (*mcp.CallToolResult, objectsOutput, error) {
+			if len(input.ObjectIDs) < 1 || len(input.ObjectIDs) > protocol.MaxBatchOperations {
+				return nil, objectsOutput{}, errors.New("object_ids must contain between 1 and 100 entries")
+			}
+			result, err := client.InspectObjects(ctx, protocol.InspectObjectsParams(input))
+			return nil, objectsOutput{Objects: result}, err
+		})
+
+	mcp.AddTool(server, &mcp.Tool{Name: "inspect_object_values", Description: "Inspect every effect item on an object, including raw values, track metadata, and values sampled at a frame."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectValuesInput) (*mcp.CallToolResult, objectValuesOutput, error) {
+			if input.ObjectID == 0 || (input.Frame != nil && *input.Frame < 0) {
+				return nil, objectValuesOutput{}, errors.New("object_id is required and frame must be non-negative")
+			}
+			result, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams(input))
+			return nil, objectValuesOutput{Values: result}, err
 		})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "list_effects", Description: "List effect definitions registered in AviUtl2."},
@@ -295,6 +340,42 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
+	mcp.AddTool(server, &mcp.Tool{Name: "duplicate_objects", Description: "Duplicate objects with all effects and animation. Repetitions are created in one Undo unit."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input duplicateObjectsInput) (*mcp.CallToolResult, mutationOutput, error) {
+			if err := input.mutationContext.validate(); err != nil {
+				return nil, mutationOutput{}, err
+			}
+			if len(input.ObjectIDs) == 0 {
+				return nil, mutationOutput{}, errors.New("object_ids is required")
+			}
+			if input.Repeat == 0 {
+				input.Repeat = 1
+			}
+			if input.Repeat < 1 || input.Repeat > 20 || len(input.ObjectIDs)*input.Repeat > protocol.MaxBatchOperations {
+				return nil, mutationOutput{}, errors.New("repeat must be between 1 and 20 and total copies must not exceed 100")
+			}
+			objects, err := inspectObjects(ctx, client, input.ObjectIDs, input.mutationContext)
+			if err != nil {
+				return nil, mutationOutput{}, err
+			}
+			operations := make([]protocol.BatchOperation, 0, len(objects)*input.Repeat)
+			for repetition := 1; repetition <= input.Repeat; repetition++ {
+				for _, object := range objects {
+					layer := object.Layer + input.LayerOffset*repetition
+					frame := object.Start + input.FrameOffset*repetition
+					if layer < 0 || frame < 0 {
+						return nil, mutationOutput{}, errors.New("duplicate target layer and frame must be non-negative")
+					}
+					operations = append(operations, protocol.BatchOperation{
+						Op: "duplicate_object", ObjectID: object.ID, Layer: &layer, Frame: &frame,
+						Length: object.End - object.Start + 1,
+					})
+				}
+			}
+			result, err := client.ExecuteBatch(ctx, protocol.ExecuteBatchParams{Operations: operations}, input.expected())
+			return nil, mutationOutput{Mutation: result}, err
+		})
+
 	addEffectTool(server, client, "add_effect", "Add or replace an effect on an object.")
 	addEffectTool(server, client, "delete_effect", "Delete an effect by zero-based index.")
 	addEffectTool(server, client, "set_effect_state", "Enable, lock, or reorder an effect by zero-based index.")
@@ -341,6 +422,9 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return content, output, nil
 		})
 
+	addTimelineTools(server, client)
+	addContactSheetTool(server, client)
+
 	return server
 }
 
@@ -383,6 +467,20 @@ func validateBatchOperations(operations []protocol.BatchOperation) error {
 			if strings.TrimSpace(operation.File) == "" || operation.Layer == nil || *operation.Layer < 0 || operation.Frame == nil || *operation.Frame < 0 || operation.Length < 0 {
 				return fmt.Errorf("%s add_media requires a file and non-negative layer/frame/length", prefix)
 			}
+		case "duplicate_object":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if operation.Layer == nil || *operation.Layer < 0 || operation.Frame == nil || *operation.Frame < 0 || operation.Length < 1 {
+				return fmt.Errorf("%s duplicate_object requires non-negative layer/frame and positive length", prefix)
+			}
+		case "replace_media":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if strings.TrimSpace(operation.File) == "" || (operation.Item != "" && strings.TrimSpace(operation.Effect) == "") {
+				return fmt.Errorf("%s requires file; item also requires effect", prefix)
+			}
 		case "update_object":
 			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
 				return err
@@ -399,6 +497,60 @@ func validateBatchOperations(operations []protocol.BatchOperation) error {
 			}
 			if operation.ObjectID == 0 {
 				return fmt.Errorf("%s requires object_id", prefix)
+			}
+		case "create_section":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if operation.Frame == nil || *operation.Frame < 0 {
+				return fmt.Errorf("%s requires a non-negative frame", prefix)
+			}
+		case "delete_section":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if operation.Section == nil || *operation.Section < 1 {
+				return fmt.Errorf("%s requires a positive section index", prefix)
+			}
+		case "move_section":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if operation.Section == nil || *operation.Section < 0 || operation.Frame == nil || *operation.Frame < 0 {
+				return fmt.Errorf("%s requires non-negative section and frame", prefix)
+			}
+		case "set_layer_state":
+			if operation.Layer == nil || *operation.Layer < 0 || (operation.Name == nil && operation.Enabled == nil && operation.Locked == nil) {
+				return fmt.Errorf("%s requires a layer and at least one state update", prefix)
+			}
+		case "set_scene_settings":
+			if operation.Name == nil && operation.Width == nil && operation.Height == nil && operation.Rate == nil && operation.Scale == nil && operation.SampleRate == nil {
+				return fmt.Errorf("%s requires at least one scene update", prefix)
+			}
+			if (operation.Width == nil) != (operation.Height == nil) || (operation.Rate == nil) != (operation.Scale == nil) {
+				return fmt.Errorf("%s requires width/height and rate/scale in pairs", prefix)
+			}
+			if (operation.Width != nil && (*operation.Width < 1 || *operation.Height < 1)) ||
+				(operation.Rate != nil && (*operation.Rate < 1 || *operation.Scale < 1)) ||
+				(operation.SampleRate != nil && *operation.SampleRate < 1) {
+				return fmt.Errorf("%s scene numeric values must be positive", prefix)
+			}
+		case "set_marker", "clear_marker":
+			if operation.Frame == nil || *operation.Frame < 0 {
+				return fmt.Errorf("%s requires a non-negative frame", prefix)
+			}
+		case "move_marker":
+			if operation.Frame == nil || *operation.Frame < 0 || operation.FrameTo == nil || *operation.FrameTo < 0 {
+				return fmt.Errorf("%s requires non-negative frame and frame_to", prefix)
+			}
+		case "set_cursor", "set_display":
+			if operation.Layer == nil || *operation.Layer < 0 || operation.Frame == nil || *operation.Frame < 0 {
+				return fmt.Errorf("%s requires non-negative layer and frame", prefix)
+			}
+		case "set_selection_range":
+			if operation.Start == nil || operation.End == nil ||
+				!((*operation.Start == -1 && *operation.End == -1) || (*operation.Start >= 0 && *operation.End >= *operation.Start)) {
+				return fmt.Errorf("%s requires an ordered range or -1/-1 to clear", prefix)
 			}
 		case "add_effect":
 			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
@@ -446,7 +598,35 @@ func validateBatchObjectReference(prefix string, operationIndex int, operation p
 	return nil
 }
 
+func inspectObjects(ctx context.Context, client *bridge.Client, objectIDs []uint64, expected mutationContext) ([]protocol.Object, error) {
+	for _, objectID := range objectIDs {
+		if objectID == 0 {
+			return nil, errors.New("object_ids must not contain zero")
+		}
+	}
+	result, err := client.InspectObjects(ctx, protocol.InspectObjectsParams{ObjectIDs: objectIDs, IncludeEffects: true})
+	if err != nil {
+		return nil, err
+	}
+	if result.Context.SessionID != expected.SessionID || result.Context.Generation != expected.Generation || result.Context.SceneID != expected.SceneID {
+		return nil, errors.New("AviUtl2 context changed while planning; call get_context and retry")
+	}
+	return result.Objects, nil
+}
+
 func previewPNG(preview protocol.PreviewResult) ([]byte, error) {
+	img, err := previewImage(preview)
+	if err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	if err := png.Encode(&output, img); err != nil {
+		return nil, fmt.Errorf("encode preview PNG: %w", err)
+	}
+	return output.Bytes(), nil
+}
+
+func previewImage(preview protocol.PreviewResult) (*image.NRGBA, error) {
 	if preview.Width < 1 || preview.Height < 1 || preview.Width > 800 || preview.Height > 800 {
 		return nil, errors.New("bridge returned invalid preview dimensions")
 	}
@@ -458,10 +638,5 @@ func previewPNG(preview protocol.PreviewResult) ([]byte, error) {
 	if len(pixels) != want {
 		return nil, fmt.Errorf("preview pixel length is %d, want %d", len(pixels), want)
 	}
-	img := &image.NRGBA{Pix: pixels, Stride: preview.Width * 4, Rect: image.Rect(0, 0, preview.Width, preview.Height)}
-	var output bytes.Buffer
-	if err := png.Encode(&output, img); err != nil {
-		return nil, fmt.Errorf("encode preview PNG: %w", err)
-	}
-	return output.Bytes(), nil
+	return &image.NRGBA{Pix: pixels, Stride: preview.Width * 4, Rect: image.Rect(0, 0, preview.Width, preview.Height)}, nil
 }

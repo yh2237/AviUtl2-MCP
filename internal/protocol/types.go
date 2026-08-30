@@ -124,6 +124,17 @@ type ObjectResult struct {
 	Object  Object  `json:"object"`
 }
 
+type InspectObjectsParams struct {
+	ObjectIDs      []uint64 `json:"object_ids"`
+	IncludeAlias   bool     `json:"include_alias,omitempty"`
+	IncludeEffects bool     `json:"include_effects,omitempty"`
+}
+
+type ObjectsResult struct {
+	Context Context  `json:"context"`
+	Objects []Object `json:"objects"`
+}
+
 type EffectDefinition struct {
 	Name  string `json:"name"`
 	Type  int    `json:"type"`
@@ -142,6 +153,47 @@ type ListEffectItemsParams struct {
 type EffectItemsResult struct {
 	Effect string       `json:"effect"`
 	Items  []EffectItem `json:"items"`
+}
+
+type TrackInfo struct {
+	Mode        string    `json:"mode,omitempty"`
+	Parameters  []float64 `json:"parameters,omitempty"`
+	Accelerate  bool      `json:"accelerate"`
+	Decelerate  bool      `json:"decelerate"`
+	TwoPoint    bool      `json:"two_point"`
+	TimeControl bool      `json:"time_control"`
+	GroupCount  int       `json:"group_count"`
+	GroupIndex  int       `json:"group_index"`
+	GroupName   string    `json:"group_name,omitempty"`
+}
+
+type ObjectItemValue struct {
+	Name         string     `json:"name"`
+	Type         int        `json:"type"`
+	RawValue     string     `json:"raw_value,omitempty"`
+	SampledValue *float64   `json:"sampled_value,omitempty"`
+	Checked      *bool      `json:"checked,omitempty"`
+	Track        *TrackInfo `json:"track,omitempty"`
+}
+
+type ObjectEffectValues struct {
+	Index   int               `json:"index"`
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	Locked  bool              `json:"locked"`
+	Items   []ObjectItemValue `json:"items"`
+}
+
+type InspectObjectValuesParams struct {
+	ObjectID uint64   `json:"object_id"`
+	Frame    *float64 `json:"frame,omitempty"`
+}
+
+type ObjectValuesResult struct {
+	Context Context              `json:"context"`
+	Object  Object               `json:"object"`
+	Frame   float64              `json:"frame"`
+	Effects []ObjectEffectValues `json:"effects"`
 }
 
 type SelectionResult struct {
@@ -227,6 +279,17 @@ type BatchOperation struct {
 	Enabled     *bool            `json:"enabled,omitempty"`
 	Locked      *bool            `json:"locked,omitempty"`
 	Properties  []PropertyUpdate `json:"properties,omitempty"`
+	Section     *int             `json:"section,omitempty"`
+	FrameTo     *int             `json:"frame_to,omitempty"`
+	Start       *int             `json:"start,omitempty"`
+	End         *int             `json:"end,omitempty"`
+	Width       *int             `json:"width,omitempty"`
+	Height      *int             `json:"height,omitempty"`
+	Rate        *int             `json:"rate,omitempty"`
+	Scale       *int             `json:"scale,omitempty"`
+	SampleRate  *int             `json:"sample_rate,omitempty"`
+	Memo        *string          `json:"memo,omitempty"`
+	Item        string           `json:"item,omitempty"`
 }
 
 type ExecuteBatchParams struct {

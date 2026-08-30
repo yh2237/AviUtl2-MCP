@@ -434,6 +434,24 @@ void inspect_object(SectionCall* call, EDIT_SECTION* edit) {
     };
 }
 
+void inspect_objects(SectionCall* call, EDIT_SECTION* edit) {
+    const json& object_ids = call->params.at("object_ids");
+    if (!object_ids.is_array() || object_ids.empty() || object_ids.size() > 100) {
+        throw BridgeError("INVALID_ARGUMENT", "object_ids must contain between 1 and 100 entries");
+    }
+    const bool include_alias = call->params.value("include_alias", false);
+    const bool include_effects = call->params.value("include_effects", false);
+    json objects = json::array();
+    for (const json& object_id : object_ids) {
+        objects.push_back(object_json(edit, resolve_object(object_id.get<std::uint64_t>()),
+                                      include_alias, include_effects));
+    }
+    call->result = {
+        {"context", context_json(edit)},
+        {"objects", std::move(objects)},
+    };
+}
+
 void get_selection(SectionCall* call, EDIT_SECTION* edit) {
     json objects = json::array();
     const int count = std::max(0, edit->get_selected_object_num());
@@ -470,6 +488,103 @@ void preflight_media(SectionCall* call, EDIT_SECTION* edit) {
     };
 }
 
+struct ObjectItemEnumeration {
+    EDIT_SECTION* edit = nullptr;
+    EFFECT_HANDLE effect = nullptr;
+    double frame = 0.0;
+    json items = json::array();
+    std::string error;
+};
+
+void collect_object_item(void* parameter, LPCWSTR name, int type) noexcept {
+    auto* call = static_cast<ObjectItemEnumeration*>(parameter);
+    try {
+        json item{{"name", wide_to_utf8(name)}, {"type", type}};
+        if (const char* raw = call->edit->get_effect_item_value(call->effect, name); raw != nullptr) {
+            item["raw_value"] = std::string(raw);
+        }
+        if (type == EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER) {
+            TRACK_INFO info{};
+            if (call->edit->get_effect_track_info(call->effect, name, &info, sizeof(info))) {
+                json track{
+                    {"accelerate", info.accelerate}, {"decelerate", info.decelerate},
+                    {"two_point", info.twopoint}, {"time_control", info.timecontrol},
+                    {"group_count", info.group_num}, {"group_index", info.group_index},
+                };
+                if (info.mode != nullptr) {
+                    track["mode"] = wide_to_utf8(info.mode);
+                }
+                if (info.group_name != nullptr) {
+                    track["group_name"] = wide_to_utf8(info.group_name);
+                }
+                json parameters = json::array();
+                for (int index = 0; info.param != nullptr && index < info.param_num; ++index) {
+                    parameters.push_back(info.param[index]);
+                }
+                track["parameters"] = std::move(parameters);
+                item["track"] = std::move(track);
+            }
+            double sampled = 0.0;
+            if (call->edit->get_effect_track_value(call->effect, name, call->frame, &sampled)) {
+                item["sampled_value"] = sampled;
+            }
+        } else if (type == EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK) {
+            bool checked = false;
+            if (call->edit->get_effect_check_value(
+                    call->effect, name, static_cast<int>(std::floor(call->frame)), &checked)) {
+                item["checked"] = checked;
+            }
+        }
+        call->items.push_back(std::move(item));
+    } catch (const std::exception& error) {
+        call->error = error.what();
+    } catch (...) {
+        call->error = "unknown object item enumeration error";
+    }
+}
+
+void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
+    OBJECT_HANDLE object = resolve_object(call->params.at("object_id").get<std::uint64_t>());
+    const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
+    const double frame = call->params.contains("frame") && !call->params.at("frame").is_null()
+                             ? call->params.at("frame").get<double>()
+                             : static_cast<double>(placement.start);
+    if (!std::isfinite(frame) || frame < 0.0) {
+        throw BridgeError("INVALID_ARGUMENT", "frame must be a finite non-negative number");
+    }
+
+    const int effect_count = std::max(0, edit->get_effect_list(object, nullptr, 0));
+    std::vector<EFFECT_HANDLE> effects(static_cast<std::size_t>(effect_count));
+    const int received = effect_count == 0 ? 0 : edit->get_effect_list(object, effects.data(), effect_count);
+    json values = json::array();
+    for (int index = 0; index < received; ++index) {
+        EFFECT_HANDLE effect = effects[static_cast<std::size_t>(index)];
+        const wchar_t* raw_effect_name = edit->get_effect_name(effect);
+        const std::wstring effect_name = raw_effect_name == nullptr
+                                             ? std::wstring{}
+                                             : std::wstring(raw_effect_name);
+        ObjectItemEnumeration enumeration{edit, effect, frame};
+        if (!effect_name.empty()) {
+            edit_handle->enum_effect_item(effect_name.c_str(), &enumeration, collect_object_item);
+        }
+        if (!enumeration.error.empty()) {
+            throw BridgeError("HOST_ERROR", enumeration.error);
+        }
+        values.push_back({
+            {"index", index}, {"name", wide_to_utf8(effect_name.c_str())},
+            {"enabled", edit->get_effect_enable(effect)},
+            {"locked", edit->get_effect_lock(effect)},
+            {"items", std::move(enumeration.items)},
+        });
+    }
+    call->result = {
+        {"context", context_json(edit)},
+        {"object", object_json(edit, object, false, false)},
+        {"frame", frame},
+        {"effects", std::move(values)},
+    };
+}
+
 void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
     auto* call = static_cast<SectionCall*>(parameter);
     try {
@@ -479,10 +594,14 @@ void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
             inspect_timeline(call, edit);
         } else if (call->method == "inspect_object") {
             inspect_object(call, edit);
+        } else if (call->method == "inspect_objects") {
+            inspect_objects(call, edit);
         } else if (call->method == "get_selection") {
             get_selection(call, edit);
         } else if (call->method == "preflight_media") {
             preflight_media(call, edit);
+        } else if (call->method == "inspect_object_values") {
+            inspect_object_values(call, edit);
         } else {
             throw BridgeError("METHOD_NOT_FOUND", "unknown read method: " + call->method);
         }
@@ -535,6 +654,64 @@ void apply_properties(EDIT_SECTION* edit, OBJECT_HANDLE object, const json& prop
             throw BridgeError("HOST_REJECTED", "AviUtl2 rejected property " + property.at("item").get<std::string>());
         }
     }
+}
+
+struct FileItemCollector {
+    std::vector<std::wstring> names;
+};
+
+void collect_file_item(void* parameter, LPCWSTR name, int type) noexcept {
+    if (type != EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE || name == nullptr) {
+        return;
+    }
+    try {
+        static_cast<FileItemCollector*>(parameter)->names.emplace_back(name);
+    } catch (...) {
+    }
+}
+
+std::pair<EFFECT_HANDLE, std::wstring> resolve_media_item(
+    EDIT_SECTION* edit, OBJECT_HANDLE object, const json& operation) {
+    const std::string requested_effect = operation.value("effect", "");
+    const std::string requested_item = operation.value("item", "");
+    if (!requested_effect.empty()) {
+        const std::wstring effect_name = utf8_to_wide(requested_effect);
+        EFFECT_HANDLE effect = edit->find_effect(object, effect_name.c_str());
+        if (effect == nullptr) {
+            throw BridgeError("NOT_FOUND", "media effect was not found");
+        }
+        if (!requested_item.empty()) {
+            return {effect, utf8_to_wide(requested_item)};
+        }
+        FileItemCollector items;
+        edit_handle->enum_effect_item(effect_name.c_str(), &items, collect_file_item);
+        if (items.names.size() != 1) {
+            throw BridgeError("INVALID_ARGUMENT", "effect must have exactly one file item or item must be specified");
+        }
+        return {effect, items.names.front()};
+    }
+
+    const int count = std::max(0, edit->get_effect_list(object, nullptr, 0));
+    std::vector<EFFECT_HANDLE> effects(static_cast<std::size_t>(count));
+    const int received = count == 0 ? 0 : edit->get_effect_list(object, effects.data(), count);
+    std::vector<std::pair<EFFECT_HANDLE, std::wstring>> candidates;
+    for (int index = 0; index < received; ++index) {
+        EFFECT_HANDLE effect = effects[static_cast<std::size_t>(index)];
+        const wchar_t* name = edit->get_effect_name(effect);
+        if (name == nullptr) {
+            continue;
+        }
+        const std::wstring effect_name(name);
+        FileItemCollector items;
+        edit_handle->enum_effect_item(effect_name.c_str(), &items, collect_file_item);
+        for (const auto& item : items.names) {
+            candidates.emplace_back(effect, item);
+        }
+    }
+    if (candidates.size() != 1) {
+        throw BridgeError("INVALID_ARGUMENT", "object must have exactly one file item or effect/item must be specified");
+    }
+    return candidates.front();
 }
 
 json execute_operations(const json& operations, EDIT_SECTION* edit) {
@@ -596,6 +773,45 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             const std::uint64_t id = register_object(object);
             result["object_id"] = id;
             result["changed"] = true;
+        } else if (op == "duplicate_object") {
+            OBJECT_HANDLE source = operation_object(operation, index, created);
+            const char* alias_value = edit->get_object_alias(source);
+            if (alias_value == nullptr) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not export the source object alias");
+            }
+            const std::string alias(alias_value);
+            const OBJECT_LAYER_FRAME source_placement = edit->get_object_layer_frame(source);
+            const int layer = operation.at("layer").get<int>();
+            const int frame = operation.at("frame").get<int>();
+            const int length = operation.value(
+                "length", source_placement.end - source_placement.start + 1);
+            if (layer < 0 || frame < 0 || length < 1) {
+                throw BridgeError("INVALID_ARGUMENT", "duplicate_object requires valid layer, frame, and length");
+            }
+            OBJECT_HANDLE object = edit->create_object_from_alias(alias.c_str(), layer, frame, length);
+            if (object == nullptr) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not duplicate the object");
+            }
+            created[raw_index] = object;
+            const std::uint64_t id = register_object(object);
+            result["object_id"] = id;
+            result["changed"] = true;
+        } else if (op == "replace_media") {
+            OBJECT_HANDLE object = operation_object(operation, index, created);
+            const std::string file_utf8 = operation.at("file").get<std::string>();
+            if (file_utf8.empty()) {
+                throw BridgeError("INVALID_ARGUMENT", "replacement media file is required");
+            }
+            const std::wstring file = utf8_to_wide(file_utf8);
+            if (!edit->is_support_media_file(file.c_str(), true)) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 does not support the replacement media file");
+            }
+            const auto [effect, item] = resolve_media_item(edit, object, operation);
+            if (!edit->set_effect_item_value(effect, item.c_str(), file_utf8.c_str())) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 rejected the replacement media path");
+            }
+            result["object_id"] = register_object(object);
+            result["changed"] = true;
         } else if (op == "update_object") {
             OBJECT_HANDLE object = operation_object(operation, index, created);
             const bool has_update =
@@ -633,6 +849,162 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             OBJECT_HANDLE object = operation_object(operation, index, created);
             edit->delete_object(object);
             unregister_object(object);
+            result["changed"] = true;
+        } else if (op == "create_section") {
+            OBJECT_HANDLE object = operation_object(operation, index, created);
+            const int frame = operation.at("frame").get<int>();
+            const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
+            if (frame <= placement.start || frame > placement.end) {
+                throw BridgeError("INVALID_ARGUMENT", "section frame must be inside the object");
+            }
+            if (!edit->create_object_section(object, frame)) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not create the section");
+            }
+            result["object_id"] = register_object(object);
+            result["changed"] = true;
+        } else if (op == "delete_section") {
+            OBJECT_HANDLE object = operation_object(operation, index, created);
+            const int section = operation.at("section").get<int>();
+            const int count = edit->get_object_section_num(object);
+            if (section < 1 || section >= count) {
+                throw BridgeError("INVALID_ARGUMENT", "section is not a deletable intermediate section");
+            }
+            if (!edit->delete_object_section(object, section)) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not delete the section");
+            }
+            result["object_id"] = register_object(object);
+            result["changed"] = true;
+        } else if (op == "move_section") {
+            OBJECT_HANDLE object = operation_object(operation, index, created);
+            const int section = operation.at("section").get<int>();
+            const int frame = operation.at("frame").get<int>();
+            const int count = edit->get_object_section_num(object);
+            if (section < 0 || section > count || frame < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "invalid section or frame");
+            }
+            if (!edit->move_object_section(object, section, frame)) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not move the section");
+            }
+            result["object_id"] = register_object(object);
+            result["changed"] = true;
+        } else if (op == "set_layer_state") {
+            const int layer = operation.at("layer").get<int>();
+            if (layer < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "layer must be non-negative");
+            }
+            bool changed = false;
+            if (operation.contains("name") && !operation.at("name").is_null()) {
+                const std::wstring name = utf8_to_wide(operation.at("name").get<std::string>());
+                edit->set_layer_name(layer, name.c_str());
+                changed = true;
+            }
+            if (operation.contains("enabled") && !operation.at("enabled").is_null()) {
+                edit->set_layer_enable(layer, operation.at("enabled").get<bool>());
+                changed = true;
+            }
+            if (operation.contains("locked") && !operation.at("locked").is_null()) {
+                edit->set_layer_lock(layer, operation.at("locked").get<bool>());
+                changed = true;
+            }
+            if (!changed) {
+                throw BridgeError("INVALID_ARGUMENT", "set_layer_state requires a state update");
+            }
+            result["changed"] = true;
+        } else if (op == "set_scene_settings") {
+            bool changed = false;
+            if (operation.contains("name") && !operation.at("name").is_null()) {
+                const std::wstring name = utf8_to_wide(operation.at("name").get<std::string>());
+                edit->set_scene_name(name.c_str());
+                changed = true;
+            }
+            const bool has_width = operation.contains("width") && !operation.at("width").is_null();
+            const bool has_height = operation.contains("height") && !operation.at("height").is_null();
+            if (has_width != has_height) {
+                throw BridgeError("INVALID_ARGUMENT", "width and height must be specified together");
+            }
+            if (has_width) {
+                const int width = operation.at("width").get<int>();
+                const int height = operation.at("height").get<int>();
+                if (width < 1 || height < 1) {
+                    throw BridgeError("INVALID_ARGUMENT", "scene dimensions must be positive");
+                }
+                edit->set_scene_size(width, height);
+                changed = true;
+            }
+            const bool has_rate = operation.contains("rate") && !operation.at("rate").is_null();
+            const bool has_scale = operation.contains("scale") && !operation.at("scale").is_null();
+            if (has_rate != has_scale) {
+                throw BridgeError("INVALID_ARGUMENT", "rate and scale must be specified together");
+            }
+            if (has_rate) {
+                const int rate = operation.at("rate").get<int>();
+                const int scale = operation.at("scale").get<int>();
+                if (rate < 1 || scale < 1) {
+                    throw BridgeError("INVALID_ARGUMENT", "scene frame rate must be positive");
+                }
+                edit->set_scene_frame_rate(rate, scale);
+                changed = true;
+            }
+            if (operation.contains("sample_rate") && !operation.at("sample_rate").is_null()) {
+                const int sample_rate = operation.at("sample_rate").get<int>();
+                if (sample_rate < 1) {
+                    throw BridgeError("INVALID_ARGUMENT", "sample_rate must be positive");
+                }
+                edit->set_scene_sample_rate(sample_rate);
+                changed = true;
+            }
+            if (!changed) {
+                throw BridgeError("INVALID_ARGUMENT", "set_scene_settings requires an update");
+            }
+            result["changed"] = true;
+        } else if (op == "set_marker") {
+            const int frame = operation.at("frame").get<int>();
+            if (frame < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "marker frame must be non-negative");
+            }
+            const std::wstring memo = utf8_to_wide(operation.value("memo", ""));
+            edit->set_mark_frame(frame, memo.c_str());
+            result["changed"] = true;
+        } else if (op == "clear_marker") {
+            const int frame = operation.at("frame").get<int>();
+            if (frame < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "marker frame must be non-negative");
+            }
+            edit->clear_mark_frame(frame);
+            result["changed"] = true;
+        } else if (op == "move_marker") {
+            const int frame = operation.at("frame").get<int>();
+            const int frame_to = operation.at("frame_to").get<int>();
+            if (frame < 0 || frame_to < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "marker frames must be non-negative");
+            }
+            if (!edit->move_mark_frame(frame, frame_to)) {
+                throw BridgeError("HOST_REJECTED", "AviUtl2 could not move the marker");
+            }
+            result["changed"] = true;
+        } else if (op == "set_cursor") {
+            const int layer = operation.at("layer").get<int>();
+            const int frame = operation.at("frame").get<int>();
+            if (layer < 0 || frame < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "cursor layer and frame must be non-negative");
+            }
+            edit->set_cursor_layer_frame(layer, frame);
+            result["changed"] = true;
+        } else if (op == "set_display") {
+            const int layer = operation.at("layer").get<int>();
+            const int frame = operation.at("frame").get<int>();
+            if (layer < 0 || frame < 0) {
+                throw BridgeError("INVALID_ARGUMENT", "display layer and frame must be non-negative");
+            }
+            edit->set_display_layer_frame(layer, frame);
+            result["changed"] = true;
+        } else if (op == "set_selection_range") {
+            const int start = operation.at("start").get<int>();
+            const int end = operation.at("end").get<int>();
+            if (!((start == -1 && end == -1) || (start >= 0 && end >= start))) {
+                throw BridgeError("INVALID_ARGUMENT", "invalid selection range");
+            }
+            edit->set_select_range(start, end);
             result["changed"] = true;
         } else if (op == "add_effect") {
             OBJECT_HANDLE object = operation_object(operation, index, created);

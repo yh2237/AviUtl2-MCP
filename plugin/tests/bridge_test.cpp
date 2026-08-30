@@ -19,6 +19,7 @@ struct MockObject {
     bool deleted = false;
     std::wstring name;
     std::vector<MockEffect> effects{{}};
+    std::vector<int> sections{0};
 };
 
 EDIT_INFO mock_info{1920, 1080, 30, 1, 48000, 0, 0, 29, 0, 0, 0, 120, 10,
@@ -64,9 +65,11 @@ bool mock_set_item(OBJECT_HANDLE, LPCWSTR, LPCWSTR, LPCSTR) {
 bool mock_move_object(OBJECT_HANDLE handle, int layer, int frame) {
     auto* object = as_object(handle);
     const int length = object->end - object->start;
+    const int delta = frame - object->start;
     object->layer = layer;
     object->start = frame;
     object->end = frame + length;
+    for (int& section : object->sections) section += delta;
     return true;
 }
 
@@ -79,11 +82,16 @@ OBJECT_HANDLE mock_create_object(LPCWSTR, int layer, int frame, int length) {
     object->layer = layer;
     object->start = frame;
     object->end = frame + length - 1;
+    object->sections = {frame};
     MockObject* result = object.get();
     mock_objects.push_back(std::move(object));
     mock_info.layer_max = std::max(mock_info.layer_max, layer);
     mock_info.frame_max = std::max(mock_info.frame_max, result->end);
     return result;
+}
+
+OBJECT_HANDLE mock_create_alias(LPCSTR, int layer, int frame, int length) {
+    return mock_create_object(L"Alias", layer, frame, length);
 }
 
 OBJECT_HANDLE mock_create_media(LPCWSTR, int layer, int frame, int length) {
@@ -103,9 +111,40 @@ LPCWSTR mock_get_layer_name(int) { return L"Layer"; }
 bool mock_layer_enable(int) { return true; }
 bool mock_layer_lock(int) { return false; }
 LPCWSTR mock_scene_name() { return L"Scene"; }
-int mock_section_count(OBJECT_HANDLE) { return 1; }
+int mock_section_count(OBJECT_HANDLE handle) {
+    return static_cast<int>(as_object(handle)->sections.size());
+}
 int mock_section_frame(OBJECT_HANDLE handle, int index) {
-    return index == 0 ? as_object(handle)->start : -1;
+    const auto& sections = as_object(handle)->sections;
+    return index >= 0 && index < static_cast<int>(sections.size())
+               ? sections[static_cast<std::size_t>(index)] : -1;
+}
+
+bool mock_create_section(OBJECT_HANDLE handle, int frame) {
+    auto& sections = as_object(handle)->sections;
+    if (std::find(sections.begin(), sections.end(), frame) != sections.end()) return false;
+    sections.push_back(frame);
+    std::sort(sections.begin(), sections.end());
+    return true;
+}
+
+bool mock_delete_section(OBJECT_HANDLE handle, int section) {
+    auto& sections = as_object(handle)->sections;
+    if (section < 1 || section >= static_cast<int>(sections.size())) return false;
+    sections.erase(sections.begin() + section);
+    return true;
+}
+
+bool mock_move_section(OBJECT_HANDLE handle, int section, int frame) {
+    auto* object = as_object(handle);
+    if (section < 0 || section > static_cast<int>(object->sections.size())) return false;
+    if (section == static_cast<int>(object->sections.size())) {
+        object->end = frame;
+    } else {
+        object->sections[static_cast<std::size_t>(section)] = frame;
+        if (section == 0) object->start = frame;
+    }
+    return true;
 }
 
 int mock_effect_list(OBJECT_HANDLE handle, EFFECT_HANDLE* output, int count) {
@@ -142,6 +181,30 @@ bool mock_delete_effect(OBJECT_HANDLE handle, EFFECT_HANDLE effect) {
 }
 
 int mock_move_effect(OBJECT_HANDLE, EFFECT_HANDLE, int index) { return index; }
+EFFECT_HANDLE mock_find_effect(OBJECT_HANDLE handle, LPCWSTR name) {
+    auto* object = as_object(handle);
+    for (auto& effect : object->effects) {
+        if (effect.name == name) return &effect;
+    }
+    return nullptr;
+}
+LPCSTR mock_get_effect_item(EFFECT_HANDLE, LPCWSTR item) {
+    return std::wcscmp(item, L"ファイル") == 0 ? "old.png" : "34";
+}
+bool mock_set_effect_item(EFFECT_HANDLE, LPCWSTR, LPCSTR) { return true; }
+bool mock_get_track_value(EFFECT_HANDLE, LPCWSTR, double, double* value) {
+    *value = 34.0;
+    return true;
+}
+bool mock_get_check_value(EFFECT_HANDLE, LPCWSTR, int, bool* value) {
+    *value = true;
+    return true;
+}
+bool mock_get_track_info(EFFECT_HANDLE, LPCWSTR, TRACK_INFO* info, int) {
+    static double parameters[]{34.0, 40.0};
+    *info = {L"直線移動", parameters, 2, false, false, false, false, 1, 0, nullptr};
+    return true;
+}
 OBJECT_HANDLE mock_focus_object() { return mock_objects.empty() ? nullptr : mock_objects.front().get(); }
 int mock_selected_count() { return mock_objects.empty() ? 0 : 1; }
 OBJECT_HANDLE mock_selected_object(int index) { return index == 0 ? mock_focus_object() : nullptr; }
@@ -151,6 +214,20 @@ bool mock_media_info(LPCWSTR, MEDIA_INFO* info, int) {
     *info = {1, 1, 2.5, 1280, 720};
     return true;
 }
+
+void mock_set_layer_name(int, LPCWSTR) {}
+void mock_set_layer_enable(int, bool) {}
+void mock_set_layer_lock(int, bool) {}
+void mock_set_scene_name(LPCWSTR) {}
+void mock_set_scene_size(int width, int height) { mock_info.width = width; mock_info.height = height; }
+void mock_set_scene_rate(int rate, int scale) { mock_info.rate = rate; mock_info.scale = scale; }
+void mock_set_sample_rate(int value) { mock_info.sample_rate = value; }
+void mock_set_cursor(int layer, int frame) { mock_info.layer = layer; mock_info.frame = frame; }
+void mock_set_display(int layer, int frame) { mock_info.display_layer_start = layer; mock_info.display_frame_start = frame; }
+void mock_set_range(int start, int end) { mock_info.select_range_start = start; mock_info.select_range_end = end; }
+void mock_set_marker(int, LPCWSTR) {}
+void mock_clear_marker(int) {}
+bool mock_move_marker(int, int) { return true; }
 
 void mock_get_edit_info(EDIT_INFO* info, int) { *info = mock_info; }
 int mock_edit_state() { return EDIT_HANDLE::EDIT_STATE_EDIT; }
@@ -172,6 +249,7 @@ void mock_enum_effect(void* param, void (*callback)(void*, LPCWSTR, int, int)) {
 
 bool mock_enum_items(LPCWSTR, void* param, void (*callback)(void*, LPCWSTR, int)) {
     callback(param, L"サイズ", EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER);
+    callback(param, L"ファイル", EDIT_HANDLE::EFFECT_ITEM_TYPE_FILE);
     return true;
 }
 
@@ -207,6 +285,7 @@ void configure_mock() {
     mock_section.get_selected_object = mock_selected_object;
     mock_section.get_selected_object_num = mock_selected_count;
     mock_section.create_object_from_media_file = mock_create_media;
+    mock_section.create_object_from_alias = mock_create_alias;
     mock_section.create_object = mock_create_object;
     mock_section.get_object_name = mock_get_object_name;
     mock_section.set_object_name = mock_set_object_name;
@@ -217,6 +296,9 @@ void configure_mock() {
     mock_section.get_object_section_num = mock_section_count;
     mock_section.get_focus_object_section = mock_focus_section;
     mock_section.get_object_section_frame = mock_section_frame;
+    mock_section.create_object_section = mock_create_section;
+    mock_section.delete_object_section = mock_delete_section;
+    mock_section.move_object_section = mock_move_section;
     mock_section.get_effect_list = mock_effect_list;
     mock_section.get_effect_name = mock_effect_name;
     mock_section.get_effect_enable = mock_effect_enable;
@@ -226,8 +308,27 @@ void configure_mock() {
     mock_section.create_effect = mock_create_effect;
     mock_section.delete_effect = mock_delete_effect;
     mock_section.move_effect = mock_move_effect;
+    mock_section.find_effect = mock_find_effect;
+    mock_section.get_effect_item_value = mock_get_effect_item;
+    mock_section.set_effect_item_value = mock_set_effect_item;
+    mock_section.get_effect_track_value = mock_get_track_value;
+    mock_section.get_effect_check_value = mock_get_check_value;
+    mock_section.get_effect_track_info = mock_get_track_info;
     mock_section.is_support_media_file = mock_support_media;
     mock_section.get_media_info = mock_media_info;
+    mock_section.set_layer_name = mock_set_layer_name;
+    mock_section.set_layer_enable = mock_set_layer_enable;
+    mock_section.set_layer_lock = mock_set_layer_lock;
+    mock_section.set_scene_name = mock_set_scene_name;
+    mock_section.set_scene_size = mock_set_scene_size;
+    mock_section.set_scene_frame_rate = mock_set_scene_rate;
+    mock_section.set_scene_sample_rate = mock_set_sample_rate;
+    mock_section.set_cursor_layer_frame = mock_set_cursor;
+    mock_section.set_display_layer_frame = mock_set_display;
+    mock_section.set_select_range = mock_set_range;
+    mock_section.set_mark_frame = mock_set_marker;
+    mock_section.clear_mark_frame = mock_clear_marker;
+    mock_section.move_mark_frame = mock_move_marker;
 
     mock_handle.get_edit_info = mock_get_edit_info;
     mock_handle.get_edit_state = mock_edit_state;
@@ -265,6 +366,18 @@ int main() {
     assert(timeline.at("objects").size() == 1);
     const std::uint64_t object_id = timeline.at("objects").at(0).at("id").get<std::uint64_t>();
 
+    const json objects = dispatch(request("inspect_objects", {
+        {"object_ids", json::array({object_id})}, {"include_effects", true},
+    }));
+    assert(objects.at("objects").size() == 1);
+    assert(objects.at("objects").at(0).at("effects").size() == 1);
+
+    const json values = dispatch(request("inspect_object_values", {
+        {"object_id", object_id}, {"frame", 5.0},
+    }));
+    assert(values.at("effects").at(0).at("items").size() == 2);
+    assert(values.at("effects").at(0).at("items").at(0).at("sampled_value").get<double>() == 34.0);
+
     const json added = dispatch(request("add_text", {
         {"text", "hello"}, {"layer", 1}, {"frame", 10}, {"length", 20},
         {"size", 34.0}, {"color", "ffffff"},
@@ -277,6 +390,20 @@ int main() {
         {{"op", "update_object"}, {"result_ref", 0}, {"layer", 3}, {"frame", 5}},
     })}}, true));
     assert(batch.at("results").size() == 2);
+
+    const json advanced = dispatch(request("execute_batch", {{"operations", json::array({
+        {{"op", "duplicate_object"}, {"object_id", object_id}, {"layer", 4},
+         {"frame", 40}, {"length", 30}},
+        {{"op", "create_section"}, {"object_id", object_id}, {"frame", 10}},
+        {{"op", "set_layer_state"}, {"layer", 0}, {"name", "Main"}, {"locked", true}},
+        {{"op", "set_marker"}, {"frame", 15}, {"memo", "beat"}},
+        {{"op", "set_selection_range"}, {"start", 5}, {"end", 25}},
+        {{"op", "replace_media"}, {"object_id", object_id}, {"file", "new.png"},
+         {"effect", "テキスト"}, {"item", "ファイル"}},
+    })}}, true));
+    assert(advanced.at("results").size() == 6);
+    assert(mock_objects.size() >= 4);
+    assert(as_object(resolve_object(object_id))->sections.size() == 2);
 
     bool invalid_batch_rejected = false;
     try {
