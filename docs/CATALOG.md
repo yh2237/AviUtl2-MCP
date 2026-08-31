@@ -15,6 +15,7 @@ MCPクライアントには次の実行ファイルを登録してください�
 - `AVIUTL2_MCP_BRIDGE_ADDR`: 接続先。既定値は`127.0.0.1:28552`
 - `AVIUTL2_MCP_BRIDGE_TIMEOUT`: タイムアウト。既定値は`5s`
 
+---
 
 - [MCPツール](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/TOOLS.md)
 - [開発・ビルド](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/DEVELOPMENT.md)
