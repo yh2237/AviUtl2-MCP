@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 
@@ -228,6 +229,21 @@ void mock_set_range(int start, int end) { mock_info.select_range_start = start; 
 void mock_set_marker(int, LPCWSTR) {}
 void mock_clear_marker(int) {}
 bool mock_move_marker(int, int) { return true; }
+int mock_get_markers(int* frames, int count) {
+    if (frames != nullptr && count > 0) frames[0] = 15;
+    return 1;
+}
+LPCWSTR mock_get_marker_memo(int frame) { return frame == 15 ? L"beat" : nullptr; }
+int mock_get_bpm(BPM_INFO* points, int count, int) {
+    if (points != nullptr && count > 0) points[0] = {120.0F, 4, 0.0, 0.0F};
+    return 1;
+}
+void mock_set_bpm(float tempo, int beat, float) {
+    if (!(tempo > 0.0F && beat > 0)) std::abort();
+}
+void mock_set_bpm_list(BPM_INFO* points, int count, int) {
+    if (points == nullptr || count <= 0) std::abort();
+}
 
 void mock_get_edit_info(EDIT_INFO* info, int) { *info = mock_info; }
 int mock_edit_state() { return EDIT_HANDLE::EDIT_STATE_EDIT; }
@@ -245,6 +261,10 @@ bool mock_edit(void* param, void (*callback)(void*, EDIT_SECTION*)) {
 void mock_enum_effect(void* param, void (*callback)(void*, LPCWSTR, int, int)) {
     callback(param, L"テキスト", EDIT_HANDLE::EFFECT_TYPE_FILTER,
              EDIT_HANDLE::EFFECT_FLAG_VIDEO);
+}
+void mock_enum_modules(void* param, void (*callback)(void*, MODULE_INFO*)) {
+    MODULE_INFO info{MODULE_INFO::TYPE_PLUGIN_COMMON, L"Mock", L"Test module"};
+    callback(param, &info);
 }
 
 bool mock_enum_items(LPCWSTR, void* param, void (*callback)(void*, LPCWSTR, int)) {
@@ -329,6 +349,11 @@ void configure_mock() {
     mock_section.set_mark_frame = mock_set_marker;
     mock_section.clear_mark_frame = mock_clear_marker;
     mock_section.move_mark_frame = mock_move_marker;
+    mock_section.get_mark_frame_list = mock_get_markers;
+    mock_section.get_mark_frame_memo = mock_get_marker_memo;
+    mock_section.get_grid_bpm_list = mock_get_bpm;
+    mock_section.set_grid_bpm = mock_set_bpm;
+    mock_section.set_grid_bpm_list = mock_set_bpm_list;
 
     mock_handle.get_edit_info = mock_get_edit_info;
     mock_handle.get_edit_state = mock_edit_state;
@@ -336,6 +361,7 @@ void configure_mock() {
     mock_handle.call_edit_section_param = mock_edit;
     mock_handle.enum_effect_name = mock_enum_effect;
     mock_handle.enum_effect_item = mock_enum_items;
+    mock_handle.enum_module_info = mock_enum_modules;
     mock_handle.rendering_scene_video = mock_render;
     mock_handle.rendering_object_video = mock_render_object;
     mock_handle.wait_rendering_task = mock_wait_render;
@@ -378,6 +404,21 @@ int main() {
     assert(values.at("effects").at(0).at("items").size() == 2);
     assert(values.at("effects").at(0).at("items").at(0).at("sampled_value").get<double>() == 34.0);
 
+    const json filtered = dispatch(request("inspect_object_values", {
+        {"object_id", object_id}, {"effect_index", 0}, {"items", json::array({"サイズ"})},
+        {"include_track_info", false}, {"include_sampled_values", false},
+    }));
+    assert(filtered.at("effects").size() == 1);
+    assert(filtered.at("effects").at(0).at("items").size() == 1);
+    assert(!filtered.at("effects").at(0).at("items").at(0).contains("track"));
+
+    const json markers = dispatch(request("get_markers"));
+    assert(markers.at("markers").at(0).at("memo") == "beat");
+    const json bpm = dispatch(request("get_bpm_grid"));
+    assert(bpm.at("points").at(0).at("tempo").get<float>() == 120.0F);
+    const json diagnostics = dispatch(request("diagnostics"));
+    assert(diagnostics.at("modules").size() == 1);
+
     const json added = dispatch(request("add_text", {
         {"text", "hello"}, {"layer", 1}, {"frame", 10}, {"length", 20},
         {"size", 34.0}, {"color", "ffffff"},
@@ -398,10 +439,14 @@ int main() {
         {{"op", "set_layer_state"}, {"layer", 0}, {"name", "Main"}, {"locked", true}},
         {{"op", "set_marker"}, {"frame", 15}, {"memo", "beat"}},
         {{"op", "set_selection_range"}, {"start", 5}, {"end", 25}},
+        {{"op", "set_grid_bpm"}, {"tempo", 128.0}, {"beat", 4}, {"offset", 0.0}},
+        {{"op", "set_grid_bpm_list"}, {"bpm_points", json::array({
+            {{"tempo", 128.0}, {"beat", 4}, {"start", 0.0}, {"offset", 0.0}}
+        })}},
         {{"op", "replace_media"}, {"object_id", object_id}, {"file", "new.png"},
          {"effect", "テキスト"}, {"item", "ファイル"}},
     })}}, true));
-    assert(advanced.at("results").size() == 6);
+    assert(advanced.at("results").size() == 8);
     assert(mock_objects.size() >= 4);
     assert(as_object(resolve_object(object_id))->sections.size() == 2);
 

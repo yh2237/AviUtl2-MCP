@@ -119,3 +119,53 @@ func TestValidateBatchOperationsRejectsForwardReference(t *testing.T) {
 		t.Fatal("validateBatchOperations accepted a forward reference")
 	}
 }
+
+func TestReplaceStringCaseInsensitive(t *testing.T) {
+	got := replaceString("Hello HELLO hello", "hello", "AviUtl2", false)
+	if got != "AviUtl2 AviUtl2 AviUtl2" {
+		t.Fatalf("unexpected replacement: %q", got)
+	}
+}
+
+func TestTemplateTrackUsesCopyableAviUtl2Items(t *testing.T) {
+	tests := map[string]string{
+		"fade":  "透明度",
+		"slide": "X",
+		"zoom":  "拡大率",
+	}
+	for template, wantItem := range tests {
+		effect, item, err := templateTrack(template)
+		if err != nil {
+			t.Fatalf("templateTrack(%q): %v", template, err)
+		}
+		if effect != "標準描画" || item != wantItem {
+			t.Fatalf("templateTrack(%q) = %q/%q", template, effect, item)
+		}
+	}
+	if _, _, err := templateTrack("unknown"); err == nil {
+		t.Fatal("templateTrack accepted an unknown template")
+	}
+}
+
+func TestMatchesMediaInfo(t *testing.T) {
+	video := protocol.MediaInfo{Width: 1920, Height: 1080, TotalTime: 12.5, VideoTrackCount: 1, AudioTrackCount: 1}
+	if !matchesMediaInfo(video, findObjectsInput{MediaType: "video", MinWidth: 1280, MinDuration: 10}) {
+		t.Fatal("video did not match valid constraints")
+	}
+	if matchesMediaInfo(video, findObjectsInput{MediaType: "image"}) {
+		t.Fatal("timed video matched image filter")
+	}
+	image := protocol.MediaInfo{Width: 800, Height: 600, VideoTrackCount: 1}
+	if !matchesMediaInfo(image, findObjectsInput{MediaType: "image"}) {
+		t.Fatal("still image did not match image filter")
+	}
+}
+
+func TestBaseEffectName(t *testing.T) {
+	if got := baseEffectName("標準描画:2"); got != "標準描画" {
+		t.Fatalf("unexpected base effect: %q", got)
+	}
+	if got := baseEffectName("カスタム:名前"); got != "カスタム:名前" {
+		t.Fatalf("non-index suffix was removed: %q", got)
+	}
+}

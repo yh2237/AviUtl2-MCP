@@ -12,7 +12,7 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-var version = "v0.0.2"
+var version = "v0.0.3"
 
 func main() {
 	address := envOrDefault("AVIUTL2_MCP_BRIDGE_ADDR", protocol.DefaultAddress)

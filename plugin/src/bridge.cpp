@@ -43,6 +43,7 @@ constexpr std::uint32_t kMaxMessageSize = 4U << 20;
 constexpr std::uint16_t kDefaultPort = 28552;
 constexpr int kMaxTimelineObjects = 1000;
 constexpr int kMaxBatchOperations = 100;
+constexpr std::uint32_t kRequiredVersion = 2003300;
 
 COMMON_PLUGIN_TABLE plugin_table{
     L"AviUtl2 MCP Bridge",
@@ -58,6 +59,7 @@ std::mutex socket_mutex;
 SOCKET listen_socket = INVALID_SOCKET;
 SOCKET client_socket = INVALID_SOCKET;
 std::string session_id;
+std::uint32_t host_version = 0;
 
 std::mutex registry_mutex;
 std::unordered_map<std::uint64_t, OBJECT_HANDLE> objects_by_id;
@@ -494,18 +496,30 @@ struct ObjectItemEnumeration {
     double frame = 0.0;
     json items = json::array();
     std::string error;
+    std::vector<std::wstring> requested_items;
+    bool include_raw_values = true;
+    bool include_track_info = true;
+    bool include_sampled_values = true;
 };
 
 void collect_object_item(void* parameter, LPCWSTR name, int type) noexcept {
     auto* call = static_cast<ObjectItemEnumeration*>(parameter);
     try {
+        if (!call->requested_items.empty() &&
+            std::find(call->requested_items.begin(), call->requested_items.end(), name) ==
+                call->requested_items.end()) {
+            return;
+        }
         json item{{"name", wide_to_utf8(name)}, {"type", type}};
-        if (const char* raw = call->edit->get_effect_item_value(call->effect, name); raw != nullptr) {
-            item["raw_value"] = std::string(raw);
+        if (call->include_raw_values) {
+            if (const char* raw = call->edit->get_effect_item_value(call->effect, name); raw != nullptr) {
+                item["raw_value"] = std::string(raw);
+            }
         }
         if (type == EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER) {
             TRACK_INFO info{};
-            if (call->edit->get_effect_track_info(call->effect, name, &info, sizeof(info))) {
+            if (call->include_track_info &&
+                call->edit->get_effect_track_info(call->effect, name, &info, sizeof(info))) {
                 json track{
                     {"accelerate", info.accelerate}, {"decelerate", info.decelerate},
                     {"two_point", info.twopoint}, {"time_control", info.timecontrol},
@@ -525,10 +539,11 @@ void collect_object_item(void* parameter, LPCWSTR name, int type) noexcept {
                 item["track"] = std::move(track);
             }
             double sampled = 0.0;
-            if (call->edit->get_effect_track_value(call->effect, name, call->frame, &sampled)) {
+            if (call->include_sampled_values &&
+                call->edit->get_effect_track_value(call->effect, name, call->frame, &sampled)) {
                 item["sampled_value"] = sampled;
             }
-        } else if (type == EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK) {
+        } else if (type == EDIT_HANDLE::EFFECT_ITEM_TYPE_CHECK && call->include_sampled_values) {
             bool checked = false;
             if (call->edit->get_effect_check_value(
                     call->effect, name, static_cast<int>(std::floor(call->frame)), &checked)) {
@@ -556,6 +571,21 @@ void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
     const int effect_count = std::max(0, edit->get_effect_list(object, nullptr, 0));
     std::vector<EFFECT_HANDLE> effects(static_cast<std::size_t>(effect_count));
     const int received = effect_count == 0 ? 0 : edit->get_effect_list(object, effects.data(), effect_count);
+    const int requested_index = call->params.contains("effect_index") && !call->params.at("effect_index").is_null()
+                                    ? call->params.at("effect_index").get<int>() : -1;
+    const std::wstring requested_effect = utf8_to_wide(call->params.value("effect", ""));
+    if (requested_index >= received) {
+        throw BridgeError("INVALID_ARGUMENT", "effect_index is out of range");
+    }
+    std::vector<std::wstring> requested_items;
+    if (call->params.contains("items")) {
+        for (const json& item : call->params.at("items")) {
+            requested_items.push_back(utf8_to_wide(item.get<std::string>()));
+        }
+    }
+    const bool include_raw = call->params.value("include_raw_values", true);
+    const bool include_track = call->params.value("include_track_info", true);
+    const bool include_sampled = call->params.value("include_sampled_values", true);
     json values = json::array();
     for (int index = 0; index < received; ++index) {
         EFFECT_HANDLE effect = effects[static_cast<std::size_t>(index)];
@@ -563,7 +593,15 @@ void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
         const std::wstring effect_name = raw_effect_name == nullptr
                                              ? std::wstring{}
                                              : std::wstring(raw_effect_name);
+        if ((requested_index >= 0 && index != requested_index) ||
+            (!requested_effect.empty() && effect_name != requested_effect)) {
+            continue;
+        }
         ObjectItemEnumeration enumeration{edit, effect, frame};
+        enumeration.requested_items = requested_items;
+        enumeration.include_raw_values = include_raw;
+        enumeration.include_track_info = include_track;
+        enumeration.include_sampled_values = include_sampled;
         if (!effect_name.empty()) {
             edit_handle->enum_effect_item(effect_name.c_str(), &enumeration, collect_object_item);
         }
@@ -585,6 +623,31 @@ void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
     };
 }
 
+void get_markers(SectionCall* call, EDIT_SECTION* edit) {
+    const int count = std::max(0, edit->get_mark_frame_list(nullptr, 0));
+    std::vector<int> frames(static_cast<std::size_t>(count));
+    const int received = count == 0 ? 0 : edit->get_mark_frame_list(frames.data(), count);
+    json markers = json::array();
+    for (int index = 0; index < received; ++index) {
+        const int frame = frames[static_cast<std::size_t>(index)];
+        markers.push_back({{"frame", frame}, {"memo", wide_to_utf8(edit->get_mark_frame_memo(frame))}});
+    }
+    call->result = {{"context", context_json(edit)}, {"markers", std::move(markers)}};
+}
+
+void get_bpm_grid(SectionCall* call, EDIT_SECTION* edit) {
+    const int count = std::max(0, edit->get_grid_bpm_list(nullptr, 0, sizeof(BPM_INFO)));
+    std::vector<BPM_INFO> points(static_cast<std::size_t>(count));
+    const int received = count == 0 ? 0 : edit->get_grid_bpm_list(points.data(), count, sizeof(BPM_INFO));
+    json result = json::array();
+    for (int index = 0; index < received; ++index) {
+        const BPM_INFO& point = points[static_cast<std::size_t>(index)];
+        result.push_back({{"tempo", point.tempo}, {"beat", point.beat},
+                          {"start", point.start}, {"offset", point.offset}});
+    }
+    call->result = {{"context", context_json(edit)}, {"points", std::move(result)}};
+}
+
 void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
     auto* call = static_cast<SectionCall*>(parameter);
     try {
@@ -602,6 +665,10 @@ void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
             preflight_media(call, edit);
         } else if (call->method == "inspect_object_values") {
             inspect_object_values(call, edit);
+        } else if (call->method == "get_markers") {
+            get_markers(call, edit);
+        } else if (call->method == "get_bpm_grid") {
+            get_bpm_grid(call, edit);
         } else {
             throw BridgeError("METHOD_NOT_FOUND", "unknown read method: " + call->method);
         }
@@ -965,6 +1032,34 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             const std::wstring memo = utf8_to_wide(operation.value("memo", ""));
             edit->set_mark_frame(frame, memo.c_str());
             result["changed"] = true;
+        } else if (op == "set_grid_bpm") {
+            const float tempo = operation.at("tempo").get<float>();
+            const int beat = operation.at("beat").get<int>();
+            const float offset = operation.value("offset", 0.0F);
+            if (!std::isfinite(tempo) || tempo <= 0.0F || beat < 1 ||
+                !std::isfinite(offset)) {
+                throw BridgeError("INVALID_ARGUMENT", "invalid BPM grid values");
+            }
+            edit->set_grid_bpm(tempo, beat, offset);
+            result["changed"] = true;
+        } else if (op == "set_grid_bpm_list") {
+            const json& values = operation.at("bpm_points");
+            if (!values.is_array() || values.empty() || values.size() > 100) {
+                throw BridgeError("INVALID_ARGUMENT", "bpm_points must contain between 1 and 100 entries");
+            }
+            std::vector<BPM_INFO> points;
+            points.reserve(values.size());
+            for (const json& value : values) {
+                BPM_INFO point{value.at("tempo").get<float>(), value.at("beat").get<int>(),
+                               value.at("start").get<double>(), value.value("offset", 0.0F)};
+                if (!std::isfinite(point.tempo) || point.tempo <= 0.0F || point.beat < 1 ||
+                    !std::isfinite(point.start) || point.start < 0.0 || !std::isfinite(point.offset)) {
+                    throw BridgeError("INVALID_ARGUMENT", "invalid BPM point");
+                }
+                points.push_back(point);
+            }
+            edit->set_grid_bpm_list(points.data(), static_cast<int>(points.size()), sizeof(BPM_INFO));
+            result["changed"] = true;
         } else if (op == "clear_marker") {
             const int frame = operation.at("frame").get<int>();
             if (frame < 0) {
@@ -1250,6 +1345,22 @@ json dispatch(const json& request) {
         return {{"pong", true}, {"session_id", session_id},
                 {"generation", generation.load(std::memory_order_acquire)}};
     }
+    if (method == "diagnostics") {
+        EnumerationCall call;
+        edit_handle->enum_module_info(&call, [](void* parameter, MODULE_INFO* info) {
+            auto* enumeration = static_cast<EnumerationCall*>(parameter);
+            try {
+                enumeration->values.push_back({{"type", info->type}, {"name", wide_to_utf8(info->name)},
+                                               {"information", wide_to_utf8(info->information)}});
+            } catch (const std::exception& error) {
+                enumeration->error = error.what();
+            }
+        });
+        if (!call.error.empty()) throw BridgeError("HOST_ERROR", call.error);
+        return {{"session_id", session_id}, {"generation", generation.load()},
+                {"protocol_version", kProtocolVersion}, {"required_aviutl2_version", kRequiredVersion},
+                {"host_version", host_version}, {"modules", std::move(call.values)}};
+    }
     if (method == "list_effects") {
         EnumerationCall call;
         edit_handle->enum_effect_name(&call, collect_effect);
@@ -1390,14 +1501,15 @@ void on_scene_change(void*) noexcept {
 }  // namespace
 
 extern "C" __declspec(dllexport) DWORD RequiredVersion() {
-    return 2003300;
+    return kRequiredVersion;
 }
 
 extern "C" __declspec(dllexport) void InitializeLogger(LOG_HANDLE* handle) {
     logger = handle;
 }
 
-extern "C" __declspec(dllexport) bool InitializePlugin(DWORD) {
+extern "C" __declspec(dllexport) bool InitializePlugin(DWORD version) {
+    host_version = version;
     session_id = make_session_id();
     return true;
 }

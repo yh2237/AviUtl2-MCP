@@ -27,9 +27,17 @@ type Client struct {
 	address string
 	timeout time.Duration
 
-	mu     sync.Mutex
-	conn   net.Conn
-	nextID uint64
+	mu      sync.Mutex
+	conn    net.Conn
+	nextID  uint64
+	history []CallLog
+}
+
+type CallLog struct {
+	Time       time.Time `json:"time"`
+	Method     string    `json:"method"`
+	DurationMS int64     `json:"duration_ms"`
+	Error      string    `json:"error,omitempty"`
 }
 
 func NewClient(address string, timeout time.Duration) *Client {
@@ -40,6 +48,19 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closeLocked()
+}
+
+func (c *Client) Reconnect(ctx context.Context) (protocol.PingResult, error) {
+	c.mu.Lock()
+	_ = c.closeLocked()
+	c.mu.Unlock()
+	return c.Ping(ctx)
+}
+
+func (c *Client) RecentCalls() []CallLog {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]CallLog(nil), c.history...)
 }
 
 func (c *Client) Ping(ctx context.Context) (protocol.PingResult, error) {
@@ -82,6 +103,18 @@ func (c *Client) PreflightMedia(ctx context.Context, params protocol.PreflightMe
 	return call[protocol.MediaInfo](c, ctx, "preflight_media", params, nil)
 }
 
+func (c *Client) GetMarkers(ctx context.Context) (protocol.MarkersResult, error) {
+	return call[protocol.MarkersResult](c, ctx, "get_markers", struct{}{}, nil)
+}
+
+func (c *Client) GetBPMGrid(ctx context.Context) (protocol.BPMGridResult, error) {
+	return call[protocol.BPMGridResult](c, ctx, "get_bpm_grid", struct{}{}, nil)
+}
+
+func (c *Client) Diagnostics(ctx context.Context) (protocol.DiagnosticsResult, error) {
+	return call[protocol.DiagnosticsResult](c, ctx, "diagnostics", struct{}{}, nil)
+}
+
 func (c *Client) AddText(ctx context.Context, params protocol.AddTextParams, expected *protocol.ExpectedContext) (protocol.MutationResult, error) {
 	return call[protocol.MutationResult](c, ctx, "add_text", params, expected)
 }
@@ -116,9 +149,20 @@ func call[T any](c *Client, ctx context.Context, method string, params any, expe
 	return result, err
 }
 
-func (c *Client) call(ctx context.Context, method string, params any, expected *protocol.ExpectedContext, result any) error {
+func (c *Client) call(ctx context.Context, method string, params any, expected *protocol.ExpectedContext, result any) (returnErr error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	started := time.Now()
+	defer func() {
+		entry := CallLog{Time: started, Method: method, DurationMS: time.Since(started).Milliseconds()}
+		if returnErr != nil {
+			entry.Error = returnErr.Error()
+		}
+		c.history = append(c.history, entry)
+		if len(c.history) > 50 {
+			c.history = append([]CallLog(nil), c.history[len(c.history)-50:]...)
+		}
+	}()
 
 	if err := c.connectLocked(ctx); err != nil {
 		return err

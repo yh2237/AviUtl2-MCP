@@ -30,26 +30,26 @@ type timelinePlanOutput struct {
 
 type shiftObjectsInput struct {
 	mutationContext
-	ObjectIDs  []uint64 `json:"object_ids"`
-	FrameDelta int      `json:"frame_delta,omitempty"`
-	LayerDelta int      `json:"layer_delta,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
+	targetSpec
+	FrameDelta int  `json:"frame_delta,omitempty"`
+	LayerDelta int  `json:"layer_delta,omitempty"`
+	DryRun     bool `json:"dry_run,omitempty"`
 }
 
 type alignObjectsInput struct {
 	mutationContext
-	ObjectIDs   []uint64 `json:"object_ids"`
-	Edge        string   `json:"edge" jsonschema:"start, center, or end"`
-	TargetFrame *int     `json:"target_frame,omitempty" jsonschema:"defaults to the outer edge of the selected objects"`
-	DryRun      bool     `json:"dry_run,omitempty"`
+	targetSpec
+	Edge        string `json:"edge" jsonschema:"start, center, or end"`
+	TargetFrame *int   `json:"target_frame,omitempty" jsonschema:"defaults to the outer edge of the selected objects"`
+	DryRun      bool   `json:"dry_run,omitempty"`
 }
 
 type distributeObjectsInput struct {
 	mutationContext
-	ObjectIDs  []uint64 `json:"object_ids"`
-	StartFrame *int     `json:"start_frame,omitempty"`
-	EndFrame   *int     `json:"end_frame,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
+	targetSpec
+	StartFrame *int `json:"start_frame,omitempty"`
+	EndFrame   *int `json:"end_frame,omitempty"`
+	DryRun     bool `json:"dry_run,omitempty"`
 }
 
 type insertTimeInput struct {
@@ -63,11 +63,11 @@ type insertTimeInput struct {
 
 type staggerObjectsInput struct {
 	mutationContext
-	ObjectIDs  []uint64 `json:"object_ids" jsonschema:"objects in placement order"`
-	StartFrame *int     `json:"start_frame,omitempty" jsonschema:"defaults to the first object start"`
-	FrameStep  int      `json:"frame_step"`
-	LayerStep  int      `json:"layer_step,omitempty"`
-	DryRun     bool     `json:"dry_run,omitempty"`
+	targetSpec
+	StartFrame *int `json:"start_frame,omitempty" jsonschema:"defaults to the first object start"`
+	FrameStep  int  `json:"frame_step"`
+	LayerStep  int  `json:"layer_step,omitempty"`
+	DryRun     bool `json:"dry_run,omitempty"`
 }
 
 type replaceMediaInput struct {
@@ -89,7 +89,7 @@ type plannedMove struct {
 func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 	mcp.AddTool(server, &mcp.Tool{Name: "shift_objects", Description: "Move several objects by frame/layer deltas after checking final and transient collisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input shiftObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
-			objects, err := prepareObjects(ctx, client, input.mutationContext, input.ObjectIDs, 1)
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 			if err != nil {
 				return nil, timelinePlanOutput{}, err
 			}
@@ -105,7 +105,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "align_objects", Description: "Align object start, center, or end frames in one Undo unit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input alignObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
-			objects, err := prepareObjects(ctx, client, input.mutationContext, input.ObjectIDs, 2)
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 2)
 			if err != nil {
 				return nil, timelinePlanOutput{}, err
 			}
@@ -130,7 +130,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "distribute_objects", Description: "Distribute object start frames evenly between two anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input distributeObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
-			objects, err := prepareObjects(ctx, client, input.mutationContext, input.ObjectIDs, 3)
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 3)
 			if err != nil {
 				return nil, timelinePlanOutput{}, err
 			}
@@ -194,7 +194,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 
 	mcp.AddTool(server, &mcp.Tool{Name: "stagger_objects", Description: "Place ordered objects at fixed frame and layer steps."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input staggerObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
-			objects, err := prepareObjects(ctx, client, input.mutationContext, input.ObjectIDs, 2)
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 2)
 			if err != nil {
 				return nil, timelinePlanOutput{}, err
 			}

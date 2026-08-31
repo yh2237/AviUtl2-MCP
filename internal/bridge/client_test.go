@@ -70,6 +70,10 @@ func TestClientPingAndGetContext(t *testing.T) {
 	if contextResult.Width != 1920 || contextResult.Height != 1080 {
 		t.Fatalf("unexpected context: %+v", contextResult)
 	}
+	log := client.RecentCalls()
+	if len(log) != 2 || log[0].Method != "ping" || log[1].Method != "get_context" || log[0].Error != "" {
+		t.Fatalf("unexpected call log: %+v", log)
+	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}

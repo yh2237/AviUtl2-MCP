@@ -185,8 +185,14 @@ type ObjectEffectValues struct {
 }
 
 type InspectObjectValuesParams struct {
-	ObjectID uint64   `json:"object_id"`
-	Frame    *float64 `json:"frame,omitempty"`
+	ObjectID             uint64   `json:"object_id"`
+	Frame                *float64 `json:"frame,omitempty"`
+	EffectIndex          *int     `json:"effect_index,omitempty"`
+	Effect               string   `json:"effect,omitempty"`
+	Items                []string `json:"items,omitempty"`
+	IncludeRawValues     *bool    `json:"include_raw_values,omitempty"`
+	IncludeTrackInfo     *bool    `json:"include_track_info,omitempty"`
+	IncludeSampledValues *bool    `json:"include_sampled_values,omitempty"`
 }
 
 type ObjectValuesResult struct {
@@ -216,6 +222,43 @@ type MediaInfo struct {
 	TotalTime       float64 `json:"total_time"`
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
+}
+
+type Marker struct {
+	Frame int    `json:"frame"`
+	Memo  string `json:"memo,omitempty"`
+}
+
+type MarkersResult struct {
+	Context Context  `json:"context"`
+	Markers []Marker `json:"markers"`
+}
+
+type BPMPoint struct {
+	Tempo  float32 `json:"tempo"`
+	Beat   int     `json:"beat"`
+	Start  float64 `json:"start"`
+	Offset float32 `json:"offset"`
+}
+
+type BPMGridResult struct {
+	Context Context    `json:"context"`
+	Points  []BPMPoint `json:"points"`
+}
+
+type ModuleInfo struct {
+	Type        int    `json:"type"`
+	Name        string `json:"name"`
+	Information string `json:"information,omitempty"`
+}
+
+type DiagnosticsResult struct {
+	SessionID       string       `json:"session_id"`
+	Generation      uint64       `json:"generation"`
+	ProtocolVersion uint32       `json:"protocol_version"`
+	RequiredVersion uint32       `json:"required_aviutl2_version"`
+	HostVersion     uint32       `json:"host_version"`
+	Modules         []ModuleInfo `json:"modules,omitempty"`
 }
 
 type PropertyUpdate struct {
@@ -290,6 +333,10 @@ type BatchOperation struct {
 	SampleRate  *int             `json:"sample_rate,omitempty"`
 	Memo        *string          `json:"memo,omitempty"`
 	Item        string           `json:"item,omitempty"`
+	Tempo       *float32         `json:"tempo,omitempty"`
+	Beat        *int             `json:"beat,omitempty"`
+	Offset      *float32         `json:"offset,omitempty"`
+	BPMPoints   []BPMPoint       `json:"bpm_points,omitempty"`
 }
 
 type ExecuteBatchParams struct {

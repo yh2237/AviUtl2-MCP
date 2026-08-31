@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/yh2237/AviUtl2-MCP/internal/bridge"
@@ -83,8 +84,14 @@ type objectsOutput struct {
 }
 
 type inspectObjectValuesInput struct {
-	ObjectID uint64   `json:"object_id" jsonschema:"session-local object id"`
-	Frame    *float64 `json:"frame,omitempty" jsonschema:"frame used to sample animated values; defaults to object start"`
+	ObjectID             uint64   `json:"object_id" jsonschema:"session-local object id"`
+	Frame                *float64 `json:"frame,omitempty" jsonschema:"frame used to sample animated values; defaults to object start"`
+	EffectIndex          *int     `json:"effect_index,omitempty"`
+	Effect               string   `json:"effect,omitempty"`
+	Items                []string `json:"items,omitempty"`
+	IncludeRawValues     *bool    `json:"include_raw_values,omitempty" jsonschema:"defaults to true"`
+	IncludeTrackInfo     *bool    `json:"include_track_info,omitempty" jsonschema:"defaults to true"`
+	IncludeSampledValues *bool    `json:"include_sampled_values,omitempty" jsonschema:"defaults to true"`
 }
 
 type objectValuesOutput struct {
@@ -150,10 +157,10 @@ type deleteObjectInput struct {
 
 type duplicateObjectsInput struct {
 	mutationContext
-	ObjectIDs   []uint64 `json:"object_ids" jsonschema:"objects to duplicate"`
-	FrameOffset int      `json:"frame_offset" jsonschema:"frame offset applied for each repetition"`
-	LayerOffset int      `json:"layer_offset,omitempty" jsonschema:"layer offset applied for each repetition"`
-	Repeat      int      `json:"repeat,omitempty" jsonschema:"number of copies, default 1 and maximum 20"`
+	targetSpec
+	FrameOffset int `json:"frame_offset" jsonschema:"frame offset applied for each repetition"`
+	LayerOffset int `json:"layer_offset,omitempty" jsonschema:"layer offset applied for each repetition"`
+	Repeat      int `json:"repeat,omitempty" jsonschema:"number of copies, default 1 and maximum 20"`
 }
 
 type effectMutationInput struct {
@@ -168,11 +175,23 @@ type effectMutationInput struct {
 
 type batchInput struct {
 	mutationContext
-	Operations []protocol.BatchOperation `json:"operations" jsonschema:"ordered operations executed in one AviUtl2 edit section and Undo unit"`
+	Operations    []protocol.BatchOperation `json:"operations" jsonschema:"ordered operations executed in one AviUtl2 edit section and Undo unit"`
+	DryRun        bool                      `json:"dry_run,omitempty"`
+	ReturnObjects bool                      `json:"return_objects,omitempty"`
+	TimeoutMS     int                       `json:"timeout_ms,omitempty" jsonschema:"optional execution timeout in milliseconds"`
 }
 
 type mutationOutput struct {
 	Mutation protocol.MutationResult `json:"mutation"`
+}
+
+type batchOutput struct {
+	DryRun     bool                      `json:"dry_run"`
+	Valid      bool                      `json:"valid"`
+	Operations []protocol.BatchOperation `json:"operations"`
+	Mutation   *protocol.MutationResult  `json:"mutation,omitempty"`
+	Objects    []protocol.Object         `json:"objects,omitempty"`
+	ElapsedMS  int64                     `json:"elapsed_ms"`
 }
 
 type previewInput struct {
@@ -345,18 +364,15 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
 			}
-			if len(input.ObjectIDs) == 0 {
-				return nil, mutationOutput{}, errors.New("object_ids is required")
-			}
 			if input.Repeat == 0 {
 				input.Repeat = 1
 			}
-			if input.Repeat < 1 || input.Repeat > 20 || len(input.ObjectIDs)*input.Repeat > protocol.MaxBatchOperations {
-				return nil, mutationOutput{}, errors.New("repeat must be between 1 and 20 and total copies must not exceed 100")
-			}
-			objects, err := inspectObjects(ctx, client, input.ObjectIDs, input.mutationContext)
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 			if err != nil {
 				return nil, mutationOutput{}, err
+			}
+			if input.Repeat < 1 || input.Repeat > 20 || len(objects)*input.Repeat > protocol.MaxBatchOperations {
+				return nil, mutationOutput{}, errors.New("repeat must be between 1 and 20 and total copies must not exceed 100")
 			}
 			operations := make([]protocol.BatchOperation, 0, len(objects)*input.Repeat)
 			for repetition := 1; repetition <= input.Repeat; repetition++ {
@@ -380,19 +396,44 @@ func New(client *bridge.Client, version string) *mcp.Server {
 	addEffectTool(server, client, "delete_effect", "Delete an effect by zero-based index.")
 	addEffectTool(server, client, "set_effect_state", "Enable, lock, or reorder an effect by zero-based index.")
 
-	mcp.AddTool(server, &mcp.Tool{Name: "execute_batch", Description: "Execute up to 100 operations in one AviUtl2 edit section and Undo unit. Earlier changes remain if a later operation fails."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input batchInput) (*mcp.CallToolResult, mutationOutput, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "execute_batch", Description: "Preflight and execute up to 100 operations in one AviUtl2 edit section and Undo unit. Supports dry-run, timeout, progress, and result inspection."},
+		func(ctx context.Context, request *mcp.CallToolRequest, input batchInput) (*mcp.CallToolResult, batchOutput, error) {
+			started := time.Now()
+			output := batchOutput{DryRun: input.DryRun, Operations: input.Operations}
 			if err := input.mutationContext.validate(); err != nil {
-				return nil, mutationOutput{}, err
+				return nil, output, err
 			}
 			if len(input.Operations) == 0 || len(input.Operations) > protocol.MaxBatchOperations {
-				return nil, mutationOutput{}, fmt.Errorf("operations must contain between 1 and %d entries", protocol.MaxBatchOperations)
+				return nil, output, fmt.Errorf("operations must contain between 1 and %d entries", protocol.MaxBatchOperations)
+			}
+			if input.TimeoutMS < 0 || input.TimeoutMS > 300000 {
+				return nil, output, errors.New("timeout_ms must be between 0 and 300000")
 			}
 			if err := validateBatchOperations(input.Operations); err != nil {
-				return nil, mutationOutput{}, err
+				return nil, output, err
 			}
+			if err := preflightBatch(ctx, client, input.mutationContext, input.Operations); err != nil {
+				return nil, output, err
+			}
+			output.Valid = true
+			if input.DryRun {
+				output.ElapsedMS = time.Since(started).Milliseconds()
+				return nil, output, nil
+			}
+			if input.TimeoutMS > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(input.TimeoutMS)*time.Millisecond)
+				defer cancel()
+			}
+			notifyProgress(ctx, request, 0, 1, "Executing AviUtl2 batch")
 			result, err := client.ExecuteBatch(ctx, protocol.ExecuteBatchParams{Operations: input.Operations}, input.expected())
-			return nil, mutationOutput{Mutation: result}, err
+			output.Mutation = &result
+			if err == nil && input.ReturnObjects {
+				output.Objects = inspectBatchResults(ctx, client, input.Operations, result)
+			}
+			output.ElapsedMS = time.Since(started).Milliseconds()
+			notifyProgress(ctx, request, 1, 1, "AviUtl2 batch complete")
+			return nil, output, err
 		})
 
 	mcp.AddTool(server, &mcp.Tool{Name: "render_preview", Description: "Render a bounded PNG preview of the scene or one object at a frame."},
@@ -424,6 +465,12 @@ func New(client *bridge.Client, version string) *mcp.Server {
 
 	addTimelineTools(server, client)
 	addContactSheetTool(server, client)
+	addQueryTools(server, client)
+	addDiagnosticsTools(server, client, version)
+	addAdvancedEditTools(server, client)
+	addMediaTools(server, client)
+	addVisualTools(server, client)
+	addOrganizationTools(server, client)
 
 	return server
 }
@@ -538,6 +585,19 @@ func validateBatchOperations(operations []protocol.BatchOperation) error {
 		case "set_marker", "clear_marker":
 			if operation.Frame == nil || *operation.Frame < 0 {
 				return fmt.Errorf("%s requires a non-negative frame", prefix)
+			}
+		case "set_grid_bpm":
+			if operation.Tempo == nil || *operation.Tempo <= 0 || operation.Beat == nil || *operation.Beat < 1 {
+				return fmt.Errorf("%s requires positive tempo and beat", prefix)
+			}
+		case "set_grid_bpm_list":
+			if len(operation.BPMPoints) == 0 || len(operation.BPMPoints) > 100 {
+				return fmt.Errorf("%s requires 1..100 bpm_points", prefix)
+			}
+			for _, point := range operation.BPMPoints {
+				if point.Tempo <= 0 || point.Beat < 1 || point.Start < 0 {
+					return fmt.Errorf("%s contains an invalid BPM point", prefix)
+				}
 			}
 		case "move_marker":
 			if operation.Frame == nil || *operation.Frame < 0 || operation.FrameTo == nil || *operation.FrameTo < 0 {
