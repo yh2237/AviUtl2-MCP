@@ -471,6 +471,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 	addMediaTools(server, client)
 	addVisualTools(server, client)
 	addOrganizationTools(server, client)
+	addWorkspaceTools(server, client)
 
 	return server
 }
@@ -503,6 +504,13 @@ func validateBatchOperations(operations []protocol.BatchOperation) error {
 	for index, operation := range operations {
 		prefix := fmt.Sprintf("operations[%d]", index)
 		switch operation.Op {
+		case "set_object_flags":
+			if err := validateBatchObjectReference(prefix, index, operation); err != nil {
+				return err
+			}
+			if operation.Flags == nil || operation.Flags.Empty() {
+				return fmt.Errorf("%s requires at least one flag update", prefix)
+			}
 		case "add_text":
 			if operation.Text == "" || operation.Layer == nil || *operation.Layer < 0 || operation.Frame == nil || *operation.Frame < 0 || operation.Length < 1 {
 				return fmt.Errorf("%s add_text requires text, non-negative layer/frame, and positive length", prefix)
