@@ -168,3 +168,126 @@ func TestRemoteErrorPreservesDetails(t *testing.T) {
 		t.Fatalf("unexpected error: %#v", err)
 	}
 }
+
+func TestClientCancellationInterruptsReadAndReconnects(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	requestReceived := make(chan struct{})
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer conn.Close()
+		if _, err := protocol.ReadFrame(conn); err != nil {
+			serverDone <- err
+			return
+		}
+		close(requestReceived)
+		if _, err := protocol.ReadFrame(conn); err == nil {
+			serverDone <- errors.New("cancelled connection was reused")
+			return
+		}
+		next, err := listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer next.Close()
+		payload, err := protocol.ReadFrame(next)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		var req protocol.Request
+		if err := json.Unmarshal(payload, &req); err != nil {
+			serverDone <- err
+			return
+		}
+		response, _ := json.Marshal(protocol.Response{
+			ID: req.ID, Version: protocol.Version, Result: json.RawMessage(`{"pong":true}`),
+		})
+		serverDone <- protocol.WriteFrame(next, response)
+	}()
+	client := NewClient(listener.Addr().String(), 10*time.Second)
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	callDone := make(chan error, 1)
+	go func() {
+		_, err := client.Ping(ctx)
+		callDone <- err
+	}()
+	select {
+	case <-requestReceived:
+	case <-time.After(3 * time.Second):
+		t.Fatal("request did not reach bridge")
+	}
+	cancel()
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation, got %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation did not interrupt bridge read")
+	}
+	if result, err := client.Ping(context.Background()); err != nil || !result.Pong {
+		t.Fatalf("reconnect failed: %+v, %v", result, err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientRejectsCancelledContextOnExistingConnection(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	client := NewClient("unused", time.Second)
+	client.conn = conn
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := client.Ping(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	if client.nextID != 0 {
+		t.Fatal("cancelled request should not be sent")
+	}
+}
+
+func TestCallTimeoutOverrideAllowsSlowSDKResponse(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	client := NewClient("unused", time.Millisecond)
+	client.conn = conn
+	defer client.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		payload, err := protocol.ReadFrame(peer)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		var req protocol.Request
+		if err := json.Unmarshal(payload, &req); err != nil {
+			serverDone <- err
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		response, _ := json.Marshal(protocol.Response{ID: req.ID, Version: protocol.Version, Result: json.RawMessage(`{"pong":true}`)})
+		serverDone <- protocol.WriteFrame(peer, response)
+	}()
+	ctx := WithCallTimeout(context.Background(), 3*time.Second)
+	if result, err := client.Ping(ctx); err != nil || !result.Pong {
+		t.Fatalf("timeout override failed: %+v, %v", result, err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}

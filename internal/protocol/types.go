@@ -46,6 +46,7 @@ type PingResult struct {
 }
 
 type Context struct {
+	Background       string  `json:"background"`
 	SessionID        string  `json:"session_id"`
 	Generation       uint64  `json:"generation"`
 	SceneID          int     `json:"scene_id"`
@@ -79,21 +80,24 @@ type Layer struct {
 }
 
 type Effect struct {
-	Index   int    `json:"index"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
-	Locked  bool   `json:"locked"`
+	NativeID string `json:"native_id,omitempty"`
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+	Locked   bool   `json:"locked"`
 }
 
 type Object struct {
-	ID       uint64   `json:"id"`
-	Name     string   `json:"name,omitempty"`
-	Layer    int      `json:"layer"`
-	Start    int      `json:"start"`
-	End      int      `json:"end"`
-	Alias    string   `json:"alias,omitempty"`
-	Effects  []Effect `json:"effects,omitempty"`
-	Sections []int    `json:"sections,omitempty"`
+	NativeID string      `json:"native_id,omitempty"`
+	Flags    ObjectFlags `json:"flags"`
+	ID       uint64      `json:"id"`
+	Name     string      `json:"name,omitempty"`
+	Layer    int         `json:"layer"`
+	Start    int         `json:"start"`
+	End      int         `json:"end"`
+	Alias    string      `json:"alias,omitempty"`
+	Effects  []Effect    `json:"effects,omitempty"`
+	Sections []int       `json:"sections,omitempty"`
 }
 
 type InspectTimelineParams struct {
@@ -177,11 +181,12 @@ type ObjectItemValue struct {
 }
 
 type ObjectEffectValues struct {
-	Index   int               `json:"index"`
-	Name    string            `json:"name"`
-	Enabled bool              `json:"enabled"`
-	Locked  bool              `json:"locked"`
-	Items   []ObjectItemValue `json:"items"`
+	NativeID string            `json:"native_id,omitempty"`
+	Index    int               `json:"index"`
+	Name     string            `json:"name"`
+	Enabled  bool              `json:"enabled"`
+	Locked   bool              `json:"locked"`
+	Items    []ObjectItemValue `json:"items"`
 }
 
 type InspectObjectValuesParams struct {
@@ -305,38 +310,39 @@ type EffectMutationParams struct {
 }
 
 type BatchOperation struct {
-	Op          string           `json:"op"`
-	ObjectID    uint64           `json:"object_id,omitempty"`
-	ResultRef   *int             `json:"result_ref,omitempty"`
-	Text        string           `json:"text,omitempty"`
-	File        string           `json:"file,omitempty"`
-	Layer       *int             `json:"layer,omitempty"`
-	Frame       *int             `json:"frame,omitempty"`
-	Length      int              `json:"length,omitempty"`
-	Size        float64          `json:"size,omitempty"`
-	Color       string           `json:"color,omitempty"`
-	Name        *string          `json:"name,omitempty"`
-	Effect      string           `json:"effect,omitempty"`
-	EffectIndex int              `json:"effect_index,omitempty"`
-	Index       *int             `json:"index,omitempty"`
-	Enabled     *bool            `json:"enabled,omitempty"`
-	Locked      *bool            `json:"locked,omitempty"`
-	Properties  []PropertyUpdate `json:"properties,omitempty"`
-	Section     *int             `json:"section,omitempty"`
-	FrameTo     *int             `json:"frame_to,omitempty"`
-	Start       *int             `json:"start,omitempty"`
-	End         *int             `json:"end,omitempty"`
-	Width       *int             `json:"width,omitempty"`
-	Height      *int             `json:"height,omitempty"`
-	Rate        *int             `json:"rate,omitempty"`
-	Scale       *int             `json:"scale,omitempty"`
-	SampleRate  *int             `json:"sample_rate,omitempty"`
-	Memo        *string          `json:"memo,omitempty"`
-	Item        string           `json:"item,omitempty"`
-	Tempo       *float32         `json:"tempo,omitempty"`
-	Beat        *int             `json:"beat,omitempty"`
-	Offset      *float32         `json:"offset,omitempty"`
-	BPMPoints   []BPMPoint       `json:"bpm_points,omitempty"`
+	Flags       *ObjectFlagUpdates `json:"flags,omitempty"`
+	Op          string             `json:"op"`
+	ObjectID    uint64             `json:"object_id,omitempty"`
+	ResultRef   *int               `json:"result_ref,omitempty"`
+	Text        string             `json:"text,omitempty"`
+	File        string             `json:"file,omitempty"`
+	Layer       *int               `json:"layer,omitempty"`
+	Frame       *int               `json:"frame,omitempty"`
+	Length      int                `json:"length,omitempty"`
+	Size        float64            `json:"size,omitempty"`
+	Color       string             `json:"color,omitempty"`
+	Name        *string            `json:"name,omitempty"`
+	Effect      string             `json:"effect,omitempty"`
+	EffectIndex int                `json:"effect_index,omitempty"`
+	Index       *int               `json:"index,omitempty"`
+	Enabled     *bool              `json:"enabled,omitempty"`
+	Locked      *bool              `json:"locked,omitempty"`
+	Properties  []PropertyUpdate   `json:"properties,omitempty"`
+	Section     *int               `json:"section,omitempty"`
+	FrameTo     *int               `json:"frame_to,omitempty"`
+	Start       *int               `json:"start,omitempty"`
+	End         *int               `json:"end,omitempty"`
+	Width       *int               `json:"width,omitempty"`
+	Height      *int               `json:"height,omitempty"`
+	Rate        *int               `json:"rate,omitempty"`
+	Scale       *int               `json:"scale,omitempty"`
+	SampleRate  *int               `json:"sample_rate,omitempty"`
+	Memo        *string            `json:"memo,omitempty"`
+	Item        string             `json:"item,omitempty"`
+	Tempo       *float32           `json:"tempo,omitempty"`
+	Beat        *int               `json:"beat,omitempty"`
+	Offset      *float32           `json:"offset,omitempty"`
+	BPMPoints   []BPMPoint         `json:"bpm_points,omitempty"`
 }
 
 type ExecuteBatchParams struct {

@@ -40,6 +40,19 @@ type CallLog struct {
 	Error      string    `json:"error,omitempty"`
 }
 
+type callTimeoutKey struct{}
+
+func WithCallTimeout(ctx context.Context, timeout time.Duration) context.Context {
+	return context.WithValue(ctx, callTimeoutKey{}, timeout)
+}
+
+func (c *Client) callTimeout(ctx context.Context) time.Duration {
+	if timeout, ok := ctx.Value(callTimeoutKey{}).(time.Duration); ok && timeout > 0 {
+		return timeout
+	}
+	return c.timeout
+}
+
 func NewClient(address string, timeout time.Duration) *Client {
 	return &Client{address: address, timeout: timeout}
 }
@@ -154,6 +167,9 @@ func (c *Client) call(ctx context.Context, method string, params any, expected *
 	defer c.mu.Unlock()
 	started := time.Now()
 	defer func() {
+		if returnErr != nil && ctx.Err() != nil {
+			returnErr = ctx.Err()
+		}
 		entry := CallLog{Time: started, Method: method, DurationMS: time.Since(started).Milliseconds()}
 		if returnErr != nil {
 			entry.Error = returnErr.Error()
@@ -164,6 +180,9 @@ func (c *Client) call(ctx context.Context, method string, params any, expected *
 		}
 	}()
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := c.connectLocked(ctx); err != nil {
 		return err
 	}
@@ -179,7 +198,7 @@ func (c *Client) call(ctx context.Context, method string, params any, expected *
 		return fmt.Errorf("encode bridge request: %w", err)
 	}
 
-	deadline := time.Now().Add(c.timeout)
+	deadline := time.Now().Add(c.callTimeout(ctx))
 	if value, ok := ctx.Deadline(); ok && value.Before(deadline) {
 		deadline = value
 	}
@@ -187,6 +206,17 @@ func (c *Client) call(ctx context.Context, method string, params any, expected *
 		_ = c.closeLocked()
 		return err
 	}
+	conn := c.conn
+	cancelDone := make(chan struct{})
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+		close(cancelDone)
+	})
+	defer func() {
+		if !stopCancel() {
+			<-cancelDone
+		}
+	}()
 	if err := protocol.WriteFrame(c.conn, payload); err != nil {
 		_ = c.closeLocked()
 		return fmt.Errorf("write bridge request: %w", err)
@@ -207,6 +237,7 @@ func (c *Client) call(ctx context.Context, method string, params any, expected *
 		return fmt.Errorf("bridge response id mismatch: got %d, want %d", response.ID, req.ID)
 	}
 	if response.Version != protocol.Version {
+		_ = c.closeLocked()
 		return fmt.Errorf("bridge protocol version mismatch: got %d, want %d", response.Version, protocol.Version)
 	}
 	if response.Error != nil {
@@ -225,7 +256,7 @@ func (c *Client) connectLocked(ctx context.Context) error {
 	if c.conn != nil {
 		return nil
 	}
-	dialer := net.Dialer{Timeout: c.timeout}
+	dialer := net.Dialer{Timeout: c.callTimeout(ctx)}
 	conn, err := dialer.DialContext(ctx, "tcp", c.address)
 	if err != nil {
 		return fmt.Errorf("connect to AviUtl2 bridge at %s: %w", c.address, err)
