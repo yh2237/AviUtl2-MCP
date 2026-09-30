@@ -20,6 +20,26 @@ ctest --test-dir build/plugin -C Release --output-on-failure
 
 C++テストは模擬`EDIT_HANDLE`を使うため、AviUtl2を起動せず実行できます。
 
+## 実機スモークテスト
+
+配置済みのサーバーとAviUtl2を起動してから実行します。読み取りのみの接続確認:
+
+```powershell
+go run ./scripts/live-smoke.go
+```
+
+専用プロジェクトで編集・シーン操作・保存／読み込み・WAV出力を検証する場合:
+
+```powershell
+go run ./scripts/live-smoke.go -edit `
+  -work-dir C:\path\to\existing\test-folder `
+  -output-plugin "WAVファイル出力 (16bit short)"
+```
+
+編集前に元のプロジェクトをスナップショットへ保存し、終了時に読み戻します。出力ではMCPプロセスを再起動してジョブ状態の保持を確認し、WAVの形式・サンプルレート・音声データも検査します。`-server`で配置先の実行ファイルを指定できます。中断時はログに表示された`-original.aup2`を本体で開くか、`-restore`で指定してください。
+
+シーン・プロジェクト・出力開始のSDK操作は、プラグインのメッセージ専用ウィンドウを経由して本体のメインスレッドで実行します。
+
 ## CIとリリース
 
 通常のpushではCIを実行しません。`CI`ワークフローは手動実行できます。
