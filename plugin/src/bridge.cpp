@@ -14,6 +14,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cwchar>
+#include <filesystem>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -43,7 +45,7 @@ constexpr std::uint32_t kMaxMessageSize = 4U << 20;
 constexpr std::uint16_t kDefaultPort = 28552;
 constexpr int kMaxTimelineObjects = 1000;
 constexpr int kMaxBatchOperations = 100;
-constexpr std::uint32_t kRequiredVersion = 2003300;
+constexpr std::uint32_t kRequiredVersion = 2011000;
 
 COMMON_PLUGIN_TABLE plugin_table{
     L"AviUtl2 MCP Bridge",
@@ -64,6 +66,7 @@ std::uint32_t host_version = 0;
 std::mutex registry_mutex;
 std::unordered_map<std::uint64_t, OBJECT_HANDLE> objects_by_id;
 std::unordered_map<OBJECT_HANDLE, std::uint64_t> ids_by_object;
+std::unordered_map<std::uint64_t, std::int64_t> native_ids_by_id;
 std::uint64_t next_object_id = 1;
 
 class BridgeError final : public std::runtime_error {
@@ -138,29 +141,46 @@ void invalidate_objects() noexcept {
     std::lock_guard lock(registry_mutex);
     objects_by_id.clear();
     ids_by_object.clear();
-    next_object_id = 1;
+    native_ids_by_id.clear();
+    // IDs must not be reused: read requests carry no expected generation.
     generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
-std::uint64_t register_object(OBJECT_HANDLE object) {
+std::uint64_t register_object(OBJECT_HANDLE object, EDIT_SECTION* edit = nullptr) {
     if (object == nullptr) {
         throw BridgeError("HOST_ERROR", "AviUtl2 returned a null object handle");
     }
+    const auto native_id = edit == nullptr ? 0 : edit->get_object_id(object);
     std::lock_guard lock(registry_mutex);
     if (const auto found = ids_by_object.find(object); found != ids_by_object.end()) {
-        return found->second;
+        const auto previous = native_ids_by_id.find(found->second);
+        if (native_id == 0 || previous == native_ids_by_id.end() || previous->second == native_id) {
+            if (native_id != 0) native_ids_by_id[found->second] = native_id;
+            return found->second;
+        }
+        native_ids_by_id.erase(found->second);
+        objects_by_id.erase(found->second);
+        ids_by_object.erase(found);
     }
     const std::uint64_t id = next_object_id++;
     objects_by_id.emplace(id, object);
     ids_by_object.emplace(object, id);
+    if (native_id != 0) native_ids_by_id.emplace(id, native_id);
     return id;
 }
 
-OBJECT_HANDLE resolve_object(std::uint64_t id) {
+OBJECT_HANDLE resolve_object(std::uint64_t id, EDIT_SECTION* edit = nullptr) {
     std::lock_guard lock(registry_mutex);
     const auto found = objects_by_id.find(id);
     if (found == objects_by_id.end()) {
         throw BridgeError("STALE_OBJECT", "object_id is unknown or belongs to an expired generation");
+    }
+    if (edit != nullptr) {
+        const auto native = native_ids_by_id.find(id);
+        const auto actual = edit->get_object_id(found->second);
+        if (actual == 0 || (native != native_ids_by_id.end() && actual != native->second)) {
+            throw BridgeError("STALE_OBJECT", "object was deleted or its native identity changed; inspect the timeline again");
+        }
     }
     return found->second;
 }
@@ -172,6 +192,7 @@ void unregister_object(OBJECT_HANDLE object) noexcept {
         return;
     }
     objects_by_id.erase(found->second);
+    native_ids_by_id.erase(found->second);
     ids_by_object.erase(found);
 }
 
@@ -279,6 +300,14 @@ json context_json(EDIT_SECTION* edit = nullptr) {
         {"grid_bpm_tempo", info.grid_bpm_tempo},
         {"grid_bpm_beat", info.grid_bpm_beat},
         {"grid_bpm_offset", info.grid_bpm_offset},
+        {"background", [&info] {
+            constexpr char hex[] = "0123456789abcdef";
+            std::string value;
+            for (auto channel : {info.background.r, info.background.g, info.background.b, info.background.a}) {
+                value += hex[channel >> 4]; value += hex[channel & 15];
+            }
+            return value;
+        }()},
     };
     if (edit != nullptr) {
         output["scene_name"] = wide_to_utf8(edit->get_scene_name());
@@ -289,6 +318,7 @@ json context_json(EDIT_SECTION* edit = nullptr) {
 json effect_json(EDIT_SECTION* edit, EFFECT_HANDLE effect, int index) {
     return {
         {"index", index},
+        {"native_id", std::to_string(edit->get_effect_id(effect))},
         {"name", wide_to_utf8(edit->get_effect_name(effect))},
         {"enabled", edit->get_effect_enable(effect)},
         {"locked", edit->get_effect_lock(effect)},
@@ -299,7 +329,14 @@ json object_json(EDIT_SECTION* edit, OBJECT_HANDLE object, bool include_alias,
                  bool include_effects) {
     const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
     json output{
-        {"id", register_object(object)},
+        {"id", register_object(object, edit)},
+        {"native_id", std::to_string(edit->get_object_id(object))},
+        {"flags", {
+            {"enable_group", edit->get_object_flag(object, OBJECT_FLAG_TYPE::ENABLE_GROUP)},
+            {"enable_camera", edit->get_object_flag(object, OBJECT_FLAG_TYPE::ENABLE_CAMERA)},
+            {"clipping_object", edit->get_object_flag(object, OBJECT_FLAG_TYPE::CLIPPING_OBJECT)},
+            {"clipping_upper_object", edit->get_object_flag(object, OBJECT_FLAG_TYPE::CLIPPING_UPPER_OBJECT)},
+        }},
         {"name", wide_to_utf8(edit->get_object_name(object))},
         {"layer", placement.layer},
         {"start", placement.start},
@@ -359,6 +396,9 @@ void store_exception(SectionCall* call) noexcept {
 }
 
 void check_expected_context(const json& expected, EDIT_SECTION* edit) {
+    (void)edit;
+    EDIT_INFO info{};
+    edit_handle->get_edit_info(&info, sizeof(info));
     if (!expected.is_object()) {
         throw BridgeError("MISSING_CONTEXT", "mutation requires session_id, generation, and scene_id");
     }
@@ -369,7 +409,7 @@ void check_expected_context(const json& expected, EDIT_SECTION* edit) {
         expected.at("generation").get<std::uint64_t>() != generation.load(std::memory_order_acquire)) {
         throw BridgeError("STALE_CONTEXT", "object generation changed; inspect the timeline again");
     }
-    if (!expected.contains("scene_id") || expected.at("scene_id").get<int>() != edit->info->scene_id) {
+    if (!expected.contains("scene_id") || expected.at("scene_id").get<int>() != info.scene_id) {
         throw BridgeError("STALE_CONTEXT", "active scene changed; call get_context again");
     }
 }
@@ -428,7 +468,7 @@ void inspect_timeline(SectionCall* call, EDIT_SECTION* edit) {
 }
 
 void inspect_object(SectionCall* call, EDIT_SECTION* edit) {
-    OBJECT_HANDLE object = resolve_object(call->params.at("object_id").get<std::uint64_t>());
+    OBJECT_HANDLE object = resolve_object(call->params.at("object_id").get<std::uint64_t>(), edit);
     call->result = {
         {"context", context_json(edit)},
         {"object", object_json(edit, object, call->params.value("include_alias", false),
@@ -445,7 +485,7 @@ void inspect_objects(SectionCall* call, EDIT_SECTION* edit) {
     const bool include_effects = call->params.value("include_effects", false);
     json objects = json::array();
     for (const json& object_id : object_ids) {
-        objects.push_back(object_json(edit, resolve_object(object_id.get<std::uint64_t>()),
+        objects.push_back(object_json(edit, resolve_object(object_id.get<std::uint64_t>(), edit),
                                       include_alias, include_effects));
     }
     call->result = {
@@ -468,7 +508,7 @@ void get_selection(SectionCall* call, EDIT_SECTION* edit) {
         {"objects", std::move(objects)},
     };
     if (OBJECT_HANDLE focus = edit->get_focus_object(); focus != nullptr) {
-        result["focus_object_id"] = register_object(focus);
+        result["focus_object_id"] = register_object(focus, edit);
     }
     call->result = std::move(result);
 }
@@ -559,7 +599,7 @@ void collect_object_item(void* parameter, LPCWSTR name, int type) noexcept {
 }
 
 void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
-    OBJECT_HANDLE object = resolve_object(call->params.at("object_id").get<std::uint64_t>());
+    OBJECT_HANDLE object = resolve_object(call->params.at("object_id").get<std::uint64_t>(), edit);
     const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
     const double frame = call->params.contains("frame") && !call->params.at("frame").is_null()
                              ? call->params.at("frame").get<double>()
@@ -610,6 +650,7 @@ void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
         }
         values.push_back({
             {"index", index}, {"name", wide_to_utf8(effect_name.c_str())},
+            {"native_id", std::to_string(edit->get_effect_id(effect))},
             {"enabled", edit->get_effect_enable(effect)},
             {"locked", edit->get_effect_lock(effect)},
             {"items", std::move(enumeration.items)},
@@ -691,7 +732,7 @@ EFFECT_HANDLE effect_at(EDIT_SECTION* edit, OBJECT_HANDLE object, int index) {
 }
 
 OBJECT_HANDLE operation_object(const json& operation, int operation_index,
-                               const std::vector<OBJECT_HANDLE>& created) {
+                               const std::vector<OBJECT_HANDLE>& created, EDIT_SECTION* edit) {
     if (operation.contains("result_ref") && !operation.at("result_ref").is_null()) {
         const int reference = operation.at("result_ref").get<int>();
         if (reference < 0 || reference >= operation_index ||
@@ -700,7 +741,7 @@ OBJECT_HANDLE operation_object(const json& operation, int operation_index,
         }
         return created[static_cast<std::size_t>(reference)];
     }
-    return resolve_object(operation.at("object_id").get<std::uint64_t>());
+    return resolve_object(operation.at("object_id").get<std::uint64_t>(), edit);
 }
 
 void apply_properties(EDIT_SECTION* edit, OBJECT_HANDLE object, const json& properties) {
@@ -819,7 +860,7 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
                 !edit->set_object_item_value(object, L"テキスト", L"文字色", color.c_str())) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 rejected a text property");
             }
-            const std::uint64_t id = register_object(object);
+            const std::uint64_t id = register_object(object, edit);
             result["object_id"] = id;
             result["changed"] = true;
         } else if (op == "add_media") {
@@ -837,11 +878,11 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not create a media object");
             }
             created[raw_index] = object;
-            const std::uint64_t id = register_object(object);
+            const std::uint64_t id = register_object(object, edit);
             result["object_id"] = id;
             result["changed"] = true;
         } else if (op == "duplicate_object") {
-            OBJECT_HANDLE source = operation_object(operation, index, created);
+            OBJECT_HANDLE source = operation_object(operation, index, created, edit);
             const char* alias_value = edit->get_object_alias(source);
             if (alias_value == nullptr) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not export the source object alias");
@@ -860,11 +901,11 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not duplicate the object");
             }
             created[raw_index] = object;
-            const std::uint64_t id = register_object(object);
+            const std::uint64_t id = register_object(object, edit);
             result["object_id"] = id;
             result["changed"] = true;
         } else if (op == "replace_media") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const std::string file_utf8 = operation.at("file").get<std::string>();
             if (file_utf8.empty()) {
                 throw BridgeError("INVALID_ARGUMENT", "replacement media file is required");
@@ -877,10 +918,10 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (!edit->set_effect_item_value(effect, item.c_str(), file_utf8.c_str())) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 rejected the replacement media path");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "update_object") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const bool has_update =
                 (operation.contains("layer") && !operation.at("layer").is_null()) ||
                 (operation.contains("frame") && !operation.at("frame").is_null()) ||
@@ -907,18 +948,42 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (operation.contains("properties")) {
                 apply_properties(edit, object, operation.at("properties"));
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
+        } else if (op == "set_object_flags") {
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
+            const auto& flags = operation.at("flags");
+            if (!flags.is_object() || flags.empty()) {
+                throw BridgeError("INVALID_ARGUMENT", "flags must contain at least one boolean update");
+            }
+            // Validate all entries before changing any flags on this object.
+            for (const auto& [key, value] : flags.items()) {
+                if (!value.is_boolean() || (key != "enable_group" && key != "enable_camera" &&
+                    key != "clipping_object" && key != "clipping_upper_object")) {
+                    throw BridgeError("INVALID_ARGUMENT", "unknown flag or non-boolean flag value");
+                }
+            }
+            for (const auto& [key, value] : flags.items()) {
+                const auto type = key == "enable_group" ? OBJECT_FLAG_TYPE::ENABLE_GROUP :
+                                  key == "enable_camera" ? OBJECT_FLAG_TYPE::ENABLE_CAMERA :
+                                  key == "clipping_object" ? OBJECT_FLAG_TYPE::CLIPPING_OBJECT :
+                                                           OBJECT_FLAG_TYPE::CLIPPING_UPPER_OBJECT;
+                if (edit->get_object_flag(object, type) != value.get<bool>()) {
+                    edit->set_object_flag(object, type, value.get<bool>());
+                    result["changed"] = true;
+                }
+            }
+            result["object_id"] = register_object(object, edit);
         } else if (op == "delete_object") {
             if (operation.contains("result_ref") && !operation.at("result_ref").is_null()) {
                 throw BridgeError("INVALID_ARGUMENT", "an object created in this batch cannot be deleted in the same edit section");
             }
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             edit->delete_object(object);
             unregister_object(object);
             result["changed"] = true;
         } else if (op == "create_section") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const int frame = operation.at("frame").get<int>();
             const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
             if (frame <= placement.start || frame > placement.end) {
@@ -927,10 +992,10 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (!edit->create_object_section(object, frame)) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not create the section");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "delete_section") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const int section = operation.at("section").get<int>();
             const int count = edit->get_object_section_num(object);
             if (section < 1 || section >= count) {
@@ -939,10 +1004,10 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (!edit->delete_object_section(object, section)) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not delete the section");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "move_section") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const int section = operation.at("section").get<int>();
             const int frame = operation.at("frame").get<int>();
             const int count = edit->get_object_section_num(object);
@@ -952,7 +1017,7 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (!edit->move_object_section(object, section, frame)) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not move the section");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "set_layer_state") {
             const int layer = operation.at("layer").get<int>();
@@ -1102,7 +1167,7 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             edit->set_select_range(start, end);
             result["changed"] = true;
         } else if (op == "add_effect") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             const std::string effect_name = operation.at("effect").get<std::string>();
             if (effect_name.empty()) {
                 throw BridgeError("INVALID_ARGUMENT", "effect is required");
@@ -1111,18 +1176,18 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (edit->create_effect(object, name.c_str()) == nullptr) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not add the effect");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "delete_effect") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             EFFECT_HANDLE effect = effect_at(edit, object, operation.at("effect_index").get<int>());
             if (!edit->delete_effect(object, effect)) {
                 throw BridgeError("HOST_REJECTED", "AviUtl2 could not delete the effect");
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else if (op == "set_effect_state") {
-            OBJECT_HANDLE object = operation_object(operation, index, created);
+            OBJECT_HANDLE object = operation_object(operation, index, created, edit);
             EFFECT_HANDLE effect = effect_at(edit, object, operation.at("effect_index").get<int>());
             if ((!operation.contains("enabled") || operation.at("enabled").is_null()) &&
                 (!operation.contains("locked") || operation.at("locked").is_null()) &&
@@ -1144,7 +1209,7 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
                     throw BridgeError("HOST_REJECTED", "AviUtl2 could not reorder the effect");
                 }
             }
-            result["object_id"] = register_object(object);
+            result["object_id"] = register_object(object, edit);
             result["changed"] = true;
         } else {
             throw BridgeError("INVALID_ARGUMENT", "unknown batch operation: " + op);
@@ -1288,8 +1353,19 @@ json render_preview(const json& params) {
     if (object_id == 0) {
         scheduled = edit_handle->rendering_scene_video(render.frame, &render, collect_render);
     } else {
+        struct ResolveCall { std::uint64_t id; OBJECT_HANDLE object = nullptr; SectionCall error; };
+        ResolveCall resolve{object_id};
+        const bool readable = edit_handle->call_read_section_param(&resolve, [](void* parameter, EDIT_SECTION* edit) noexcept {
+            auto* value = static_cast<ResolveCall*>(parameter);
+            try { value->object = resolve_object(value->id, edit); }
+            catch (...) { store_exception(&value->error); }
+        });
+        if (!readable) throw BridgeError("EDIT_UNAVAILABLE", "AviUtl2 is not currently readable", true);
+        if (!resolve.error.error_code.empty()) {
+            throw BridgeError(resolve.error.error_code, resolve.error.error_message, resolve.error.retryable);
+        }
         scheduled = edit_handle->rendering_object_video(
-            resolve_object(object_id), render.frame, params.value("apply_effects", false),
+            resolve.object, render.frame, params.value("apply_effects", false),
             &render, collect_render);
     }
     if (!scheduled) {
@@ -1327,6 +1403,8 @@ json call_section(const std::string& method, const json& params, const json& exp
     return std::move(call.result);
 }
 
+#include "workspace.hpp"
+
 json dispatch(const json& request) {
     if (!request.is_object()) {
         throw BridgeError("INVALID_REQUEST", "request must be a JSON object");
@@ -1340,6 +1418,14 @@ json dispatch(const json& request) {
     const std::string method = request.value("method", "");
     const json params = request.value("params", json::object());
     const json expected = request.value("context", json(nullptr));
+
+    if (method == "list_scenes") return list_scenes();
+    if (method == "list_output_plugins") return list_output_plugins();
+    if (method == "get_output_status") return output_status(params.value("job_id", std::uint64_t{0}));
+    if (method == "select_scene" || method == "create_scene" || method == "create_project" ||
+        method == "open_project" || method == "save_project" || method == "output_file") {
+        return call_workspace(method, params, expected);
+    }
 
     if (method == "ping") {
         return {{"pong", true}, {"session_id", session_id},
@@ -1392,6 +1478,15 @@ json dispatch(const json& request) {
     return call_section(method, params, expected, editing);
 }
 
+std::string encode_response(std::uint64_t id, const json& response) {
+    std::string encoded = response.dump(-1, ' ', false, json::error_handler_t::replace);
+    if (encoded.size() > kMaxMessageSize) {
+        return error_response(id, "RESPONSE_TOO_LARGE",
+                              "bridge response exceeds 4 MiB; reduce the requested data or preview size").dump();
+    }
+    return encoded;
+}
+
 void serve_client(SOCKET socket) {
     while (running.load(std::memory_order_acquire)) {
         std::string payload;
@@ -1417,7 +1512,7 @@ void serve_client(SOCKET socket) {
             response = error_response(id, "INTERNAL_ERROR", "unknown request error");
         }
 
-        const std::string encoded = response.dump(-1, ' ', false, json::error_handler_t::replace);
+        const std::string encoded = encode_response(id, response);
         if (!write_frame(socket, encoded)) {
             return;
         }
@@ -1509,6 +1604,7 @@ extern "C" __declspec(dllexport) void InitializeLogger(LOG_HANDLE* handle) {
 }
 
 extern "C" __declspec(dllexport) bool InitializePlugin(DWORD version) {
+    if (version < kRequiredVersion) return false;
     host_version = version;
     session_id = make_session_id();
     return true;
@@ -1520,6 +1616,7 @@ extern "C" __declspec(dllexport) void UninitializePlugin() {
     if (server_thread.joinable()) {
         server_thread.join();
     }
+    stop_workspace_window();
     invalidate_objects();
     edit_handle = nullptr;
 }
@@ -1539,6 +1636,11 @@ extern "C" __declspec(dllexport) void RegisterPlugin(HOST_APP_TABLE* host) {
     }
     host->register_project_load_handler(on_project_load);
     host->register_event_listener(EVENT_TYPE::CHANGE_EDIT_SCENE, nullptr, on_scene_change);
+    host->register_event_listener(EVENT_TYPE::CHANGE_EDIT_STATE, nullptr, on_edit_state_change);
+    if (!start_workspace_window()) {
+        log_error(L"AviUtl2 MCP bridge: could not create main-thread dispatcher");
+        return;
+    }
     running.store(true, std::memory_order_release);
     server_thread = std::thread(server_main);
 }

@@ -11,9 +11,12 @@ struct MockEffect {
     std::wstring name = L"テキスト";
     bool enabled = true;
     bool locked = false;
+    std::int64_t native_id = 9007199254740993LL;
 };
 
 struct MockObject {
+    std::int64_t native_id = 0;
+    bool flags[4]{true, true, false, false};
     int layer = 0;
     int start = 0;
     int end = 29;
@@ -80,6 +83,8 @@ void mock_delete_object(OBJECT_HANDLE handle) {
 
 OBJECT_HANDLE mock_create_object(LPCWSTR, int layer, int frame, int length) {
     auto object = std::make_unique<MockObject>();
+    static std::int64_t next_native_id = 9007199254741000LL;
+    object->native_id = next_native_id++;
     object->layer = layer;
     object->start = frame;
     object->end = frame + length - 1;
@@ -247,14 +252,19 @@ void mock_set_bpm_list(BPM_INFO* points, int count, int) {
 
 void mock_get_edit_info(EDIT_INFO* info, int) { *info = mock_info; }
 int mock_edit_state() { return EDIT_HANDLE::EDIT_STATE_EDIT; }
+bool mock_section_locked = false;
 bool mock_read(void* param, void (*callback)(void*, EDIT_SECTION*)) {
+    mock_section_locked = true;
     callback(param, &mock_section);
+    mock_section_locked = false;
     return true;
 }
 bool mock_edit(void* param, void (*callback)(void*, EDIT_SECTION*)) {
+    mock_section_locked = true;
     mock_section.info = &mock_info;
     callback(param, &mock_section);
     mock_section.info = nullptr;
+    mock_section_locked = false;
     return true;
 }
 
@@ -377,10 +387,13 @@ json request(std::string method, json params = json::object(), bool expected = f
     return value;
 }
 
+#include "workspace_test.hpp"
+
 }  // namespace
 
 int main() {
     configure_mock();
+    configure_workspace_mock();
 
     const json ping = dispatch(request("ping"));
     assert(ping.at("pong").get<bool>());
@@ -475,6 +488,28 @@ int main() {
         stale_rejected = error.code() == "STALE_CONTEXT";
     }
     assert(stale_rejected);
+
+    // A new scene can return the same handle address, but must get a new ID.
+    invalidate_objects();
+    const auto new_id = register_object(mock_objects.front().get());
+    assert(new_id != object_id);
+    bool stale_id_rejected = false;
+    try {
+        (void)dispatch(request("inspect_object", {{"object_id", object_id}}));
+    } catch (const BridgeError& error) {
+        stale_id_rejected = error.code() == "STALE_OBJECT";
+    }
+    assert(stale_id_rejected);
+
+    const json oversized{{"id", 42}, {"version", kProtocolVersion},
+                         {"result", std::string(kMaxMessageSize, 'x')}};
+    const auto encoded = encode_response(42, oversized);
+    assert(encoded.size() <= kMaxMessageSize);
+    const auto size_error = json::parse(encoded);
+    assert(size_error.at("id") == 42);
+    assert(size_error.at("error").at("code") == "RESPONSE_TOO_LARGE");
+
+    test_workspace_operations();
 
     std::cout << "bridge dispatch tests passed\n";
     return 0;

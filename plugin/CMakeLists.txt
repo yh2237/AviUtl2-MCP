@@ -8,6 +8,11 @@ if(NOT EXISTS "${AVIUTL2_SDK_DIR}/plugin2.h")
   message(FATAL_ERROR "Set AVIUTL2_SDK_DIR to the official AviUtl2 SDK header directory")
 endif()
 
+file(STRINGS "${AVIUTL2_SDK_DIR}/plugin2.h" sdk_workspace_api REGEX "create_project" LIMIT_COUNT 1)
+if(NOT sdk_workspace_api)
+  message(FATAL_ERROR "Use the official AviUtl2 SDK dated 2026-09-19 or newer (scene/project/output APIs are required)")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(
   nlohmann_json
@@ -19,8 +24,8 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(aviutl2_mcp_bridge SHARED src/bridge.cpp)
 target_compile_features(aviutl2_mcp_bridge PRIVATE cxx_std_20)
-target_include_directories(aviutl2_mcp_bridge PRIVATE "${AVIUTL2_SDK_DIR}")
-target_link_libraries(aviutl2_mcp_bridge PRIVATE nlohmann_json::nlohmann_json ws2_32)
+target_include_directories(aviutl2_mcp_bridge SYSTEM PRIVATE "${AVIUTL2_SDK_DIR}")
+target_link_libraries(aviutl2_mcp_bridge PRIVATE nlohmann_json::nlohmann_json ws2_32 user32)
 target_compile_definitions(aviutl2_mcp_bridge PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 if(MSVC)
@@ -38,8 +43,8 @@ set_target_properties(aviutl2_mcp_bridge PROPERTIES
 if(BUILD_TESTING)
   add_executable(aviutl2_mcp_bridge_test tests/bridge_test.cpp)
   target_compile_features(aviutl2_mcp_bridge_test PRIVATE cxx_std_20)
-  target_include_directories(aviutl2_mcp_bridge_test PRIVATE "${AVIUTL2_SDK_DIR}")
-  target_link_libraries(aviutl2_mcp_bridge_test PRIVATE nlohmann_json::nlohmann_json ws2_32)
+  target_include_directories(aviutl2_mcp_bridge_test SYSTEM PRIVATE "${AVIUTL2_SDK_DIR}")
+  target_link_libraries(aviutl2_mcp_bridge_test PRIVATE nlohmann_json::nlohmann_json ws2_32 user32)
   if(MSVC)
     target_compile_options(aviutl2_mcp_bridge_test PRIVATE /W4 /EHsc /utf-8 /UNDEBUG)
   else()
