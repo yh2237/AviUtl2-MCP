@@ -54,6 +54,15 @@ AviUtl2 2.1.11aでは、プロジェクトが開かれていない状態で`get_
 
 `v*`タグをpushすると、最新のSDKミラーでGo/C++を検証します。全テスト成功後に限り、`.au2pkg.zip`をGitHub Releaseへ公開します。失敗時はタグだけが残ります。
 
+`go build`だけでは`server_version`が`dev`になります。配布用は`scripts/package.ps1`を使い、`-X main.version`でバージョンを埋め込んでください（`.au2pkg.zip`も同じコマンドで作成されます）。
+
+```powershell
+.\scripts\package.ps1 -Version 0.2.0-test `
+  -AviUtl2SdkDir .\build\aviutl2-sdk\include\aviutl2_sdk
+```
+
+`.au2pkg.zip`をプレビュー画面へD&Dすると、`Plugin\AviUtl2-MCP`が置き換わりパッケージ登録も更新されます。古いパッケージが登録されたままだと、再インストール時にそのバージョンへ戻るので注意してください。
+
 ## MCPツールの登録
 
 ツールは`addTool`（`internal/mcpserver/server.go`）経由で登録します。`mcp.AddTool`を直接使うと、戻り値の型から出力スキーマが生成されます。ほぼ全てのツールが同じ大きな型（`protocol.Context`、object一覧、`[]protocol.BatchOperation`）を返すため、その分が`tools/list`で重複し、82ツールで約290KB（約7万トークン）になっていました。

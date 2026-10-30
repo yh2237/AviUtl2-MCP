@@ -12,7 +12,10 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-var version = "v0.0.3"
+// version is stamped by scripts/package.ps1 (-X main.version=...). A plain
+// `go build` keeps "dev" so the reported server version can never be mistaken
+// for a released build.
+var version = "dev"
 
 func main() {
 	address := envOrDefault("AVIUTL2_MCP_BRIDGE_ADDR", protocol.DefaultAddress)
