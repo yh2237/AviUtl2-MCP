@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -20,6 +21,7 @@ type diagnosticsOutput struct {
 	ServerVersion string                     `json:"server_version"`
 	Bridge        protocol.DiagnosticsResult `json:"bridge"`
 	Context       protocol.Context           `json:"context"`
+	ContextError  string                     `json:"context_error,omitempty"`
 	LatencyMS     int64                      `json:"latency_ms"`
 	Editable      bool                       `json:"editable"`
 	Limitations   []string                   `json:"limitations"`
@@ -46,11 +48,24 @@ func addDiagnosticsTools(server *mcp.Server, client *bridge.Client, version stri
 			if err != nil {
 				return nil, diagnosticsOutput{}, fmt.Errorf("native bridge diagnostics: %w", err)
 			}
+			output := diagnosticsOutput{ServerVersion: version, Bridge: bridgeInfo, Limitations: limitations(bridgeInfo)}
 			current, err := client.GetContext(ctx)
 			if err != nil {
+				// AviUtl2 returns NO_PROJECT until it finishes opening a project.
+				// Report the bridge state instead of failing the whole diagnosis.
+				var remote *bridge.RemoteError
+				if errors.As(err, &remote) && remote.Code == "NO_PROJECT" {
+					output.ContextError = remote.Message
+					output.LatencyMS = time.Since(started).Milliseconds()
+					output.Limitations = append([]string{"AviUtl2 has no project open yet; wait for startup to finish or create a project, then retry."}, output.Limitations...)
+					return nil, output, nil
+				}
 				return nil, diagnosticsOutput{}, fmt.Errorf("AviUtl2 context: %w", err)
 			}
-			return nil, diagnosticsOutput{ServerVersion: version, Bridge: bridgeInfo, Context: current, LatencyMS: time.Since(started).Milliseconds(), Editable: current.EditState == 0, Limitations: limitations(bridgeInfo)}, nil
+			output.Context = current
+			output.LatencyMS = time.Since(started).Milliseconds()
+			output.Editable = current.EditState == 0
+			return nil, output, nil
 		})
 	addTool(server, &mcp.Tool{Name: "get_server_log", Description: "Return the last fifty bridge calls with duration and errors."},
 		func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, serverLogOutput, error) {

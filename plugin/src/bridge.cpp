@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cwchar>
 #include <filesystem>
 #include <memory>
@@ -70,6 +71,10 @@ SOCKET listen_socket = INVALID_SOCKET;
 SOCKET client_socket = INVALID_SOCKET;
 std::string session_id;
 std::uint32_t host_version = 0;
+// AviUtl2は起動直後にプロジェクトを開いていないことがあります。
+// その状態で編集情報へアクセスすると本体側が不正参照で落ちるため、
+// プロジェクト読み込みコールバックで利用可能になったことを記録します。
+std::atomic<bool> project_loaded{false};
 
 std::mutex registry_mutex;
 std::unordered_map<std::uint64_t, OBJECT_HANDLE> objects_by_id;
@@ -123,6 +128,13 @@ bool supports_high_dpi_ratio() noexcept {
     throw BridgeError("UNSUPPORTED_VERSION",
                       std::string(feature) + " requires AviUtl2 " + version_text(required) +
                           " or newer, but AviUtl2 reports " + version_text(host_version));
+}
+
+void require_project() {
+    if (!project_loaded.load(std::memory_order_acquire)) {
+        throw BridgeError("NO_PROJECT",
+                          "AviUtl2 has no project open; create or open a project first", true);
+    }
 }
 
 void require_layer_color() {
@@ -393,11 +405,12 @@ json error_response(std::uint64_t id, std::string code, std::string message,
 json context_json(EDIT_SECTION* edit = nullptr) {
     EDIT_INFO info{};
     edit_handle->get_edit_info(&info, sizeof(info));
+    const int edit_state = edit_handle->get_edit_state();
     json output{
         {"session_id", session_id},
         {"generation", generation.load(std::memory_order_acquire)},
         {"scene_id", info.scene_id},
-        {"edit_state", edit_handle->get_edit_state()},
+        {"edit_state", edit_state},
         {"width", info.width}, {"height", info.height},
         {"rate", info.rate}, {"scale", info.scale}, {"sample_rate", info.sample_rate},
         {"frame", info.frame}, {"layer", info.layer},
@@ -1595,6 +1608,7 @@ json render_preview(const json& params) {
 
 json call_section(const std::string& method, const json& params, const json& expected,
                   bool editing) {
+    require_project();
     SectionCall call{method, params, expected};
     const bool called = editing
                             ? edit_handle->call_edit_section_param(&call, edit_section_callback)
@@ -1805,6 +1819,7 @@ void server_main() noexcept {
 }
 
 void on_project_load(PROJECT_FILE*) noexcept {
+    project_loaded.store(true, std::memory_order_release);
     invalidate_objects();
 }
 

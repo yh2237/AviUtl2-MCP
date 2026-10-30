@@ -4,6 +4,18 @@
 
 作業を始めるときは`inspect_scene`を使ってください。コンテキスト、レイヤー毎のobject数とフレーム範囲、レイヤー色、マーカー、BPMを1回の呼び出しで取得できます。object個別の内容が必要になったら`inspect_timeline`や`inspect_objects`を使います。
 
+AviUtl2がプロジェクトを開くまでは、編集データを扱うツールが`NO_PROJECT`（再試行可能）を返します。本体の起動直後やプロジェクト未作成の状態では、プロジェクトを作成・読み込みしてから再試行してください。`ping`と`diagnose_connection`はその状態でも動作します。
+
+典型的な流れ:
+
+1. `inspect_scene`で全体像と`session_id` / `generation` / `scene_id`を取得
+2. 必要なら`inspect_timeline`、`inspect_object`、`inspect_object_values`で詳細を確認
+3. `dry_run`付きの編集ツールで計画を確認
+4. 同じ引数で`dry_run`を外して実行（応答の`mutation.context`が新しいコンテキスト）
+5. `render_preview`や`render_change_comparison`で結果を目視確認
+
+編集系ツールは1回の呼び出しで1つのUndo単位になります。複数の変更をまとめたいときは`execute_batch`を使ってください。
+
 ## 取得・検索
 
 - `inspect_scene`: シーン全体の概要。`include_empty`で空レイヤーも含め、`layer_start` / `layer_end` / `max_objects`で範囲を制限

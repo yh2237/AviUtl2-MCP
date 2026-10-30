@@ -9,7 +9,9 @@ AviUtl2公式Plugin SDKとGo製MCPサーバーをつなぐ`.aux2`プラグイン
 - Windows x64
 - MSVC（C++20）
 - CMake 3.24以上
-- AviUtl2 Plugin SDK
+- AviUtl2 Plugin SDK 2026-10-10以降（レイヤー背景色APIが必要）
+
+新しいSDK関数は`EDIT_SECTION` / `EDIT_HANDLE`の末尾に追記されます。古い本体ではポインタ自体が存在しないため、`InitializePlugin`で受け取った本体バージョンで判定してから呼び出します。詳細は[開発ドキュメント](../docs/DEVELOPMENT.md)を参照してください。
 
 ```powershell
 cmake -S plugin -B build/plugin `

@@ -40,6 +40,12 @@ go run ./scripts/live-smoke.go -edit `
 
 編集前に元のプロジェクトをスナップショットへ保存し、終了時に読み戻します。出力ではMCPプロセスを再起動してジョブ状態の保持を確認し、WAVの形式・サンプルレート・音声データも検査します。`-server`で配置先の実行ファイルを指定できます。中断時はログに表示された`-original.aup2`を本体で開くか、`-restore`で指定してください。
 
+`-edit`は`inspect_scene`の内容も検証します。レイヤー背景色は`diagnose_connection`の`capabilities.layer_color.supported`を見て、対応していれば設定・取得・解除まで実行し、AviUtl2 2.1.13未満なら`SKIP`と表示して続行します。
+
+## プロジェクト未作成の扱い
+
+AviUtl2 2.1.11aでは、プロジェクトが開かれていない状態で`get_edit_state()`や`call_read_section_param()`を呼ぶと本体がアクセス違反（0xc0000005）で終了します。本体の起動直後はこの状態になることがあるため、ブリッジは`register_project_load_handler`でプロジェクトが利用可能になったことを記録し、それまではSDKへ触れずに`NO_PROJECT`を返します（`project_loaded`と`require_project()`）。実機テストでは、このガードがない場合に実際に本体が落ちることを確認しています。
+
 シーン・プロジェクト・出力開始のSDK操作は、プラグインのメッセージ専用ウィンドウを経由して本体のメインスレッドで実行します。
 
 ## CIとリリース

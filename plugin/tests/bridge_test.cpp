@@ -226,14 +226,22 @@ void mock_set_layer_enable(int, bool) {}
 void mock_set_layer_lock(int, bool) {}
 PIXEL_RGBA mock_layer_colors[128]{};
 bool mock_section_locked = false;
+int mock_layer_color_reads = 0;
+int mock_layer_color_writes = 0;
+int mock_high_dpi_reads = 0;
 PIXEL_RGBA mock_get_layer_color(int layer) {
+    ++mock_layer_color_reads;
     return layer >= 0 && layer < 128 ? mock_layer_colors[layer] : PIXEL_RGBA{0, 0, 0, 0};
 }
 void mock_set_layer_color(int layer, PIXEL_RGBA color) {
     assert(mock_section_locked);
+    ++mock_layer_color_writes;
     if (layer >= 0 && layer < 128) mock_layer_colors[layer] = color;
 }
-float mock_high_dpi_ratio() { return 1.5F; }
+float mock_high_dpi_ratio() {
+    ++mock_high_dpi_reads;
+    return 1.5F;
+}
 void mock_set_scene_name(LPCWSTR) {}
 void mock_set_scene_size(int width, int height) { mock_info.width = width; mock_info.height = height; }
 void mock_set_scene_rate(int rate, int scale) { mock_info.rate = rate; mock_info.scale = scale; }
@@ -312,6 +320,7 @@ void configure_mock() {
     generation.store(10);
     session_id = "test-session";
     host_version = kHighDpiRatioVersion;  // AviUtl2 2.1.14以降を模擬する
+    project_loaded.store(true);
     for (auto& color : mock_layer_colors) color = PIXEL_RGBA{0, 0, 0, 0};
     mock_create_object(L"テキスト", 0, 0, 30);
 
@@ -412,6 +421,19 @@ int main() {
     const json ping = dispatch(request("ping"));
     assert(ping.at("pong").get<bool>());
 
+    // 本体がプロジェクトを開く前は編集情報へ触れず、再試行可能なエラーを返す
+    project_loaded.store(false);
+    bool no_project_rejected = false;
+    try {
+        (void)dispatch(request("get_context"));
+    } catch (const BridgeError& error) {
+        no_project_rejected = error.code() == "NO_PROJECT" && error.retryable();
+    }
+    assert(no_project_rejected);
+    const json ping_without_project = dispatch(request("ping"));
+    assert(ping_without_project.at("pong").get<bool>());
+    project_loaded.store(true);
+
     const json timeline = dispatch(request("inspect_timeline", {
         {"layer_start", 0}, {"layer_end", 0}, {"frame_start", 0}, {"frame_end", 60},
         {"max_objects", 10}, {"include_effects", true},
@@ -451,11 +473,16 @@ int main() {
 
     // 2.1.13未満の本体ではレイヤー背景色APIに触れず、明示的なエラーを返す
     host_version = 2011200;  // AviUtl2 2.1.12
+    mock_layer_color_reads = 0;
+    mock_layer_color_writes = 0;
+    mock_high_dpi_reads = 0;
     const json plain_layers = dispatch(request("inspect_timeline", {
         {"layer_start", 0}, {"layer_end", 0}, {"frame_start", 0}, {"frame_end", 0}, {"max_objects", 1},
     }));
     assert(plain_layers.at("layers").at(0).at("color").is_null());
     assert(!plain_layers.at("context").contains("high_dpi_ratio"));
+    assert(mock_layer_color_reads == 0);
+    assert(mock_high_dpi_reads == 0);
     bool old_host_rejected = false;
     try {
         (void)dispatch(request("execute_batch", {{"operations", json::array({
@@ -466,6 +493,7 @@ int main() {
                             std::string(error.what()).find("2.1.13") != std::string::npos;
     }
     assert(old_host_rejected);
+    assert(mock_layer_color_writes == 0);
     host_version = kHighDpiRatioVersion;
     const json current_context = dispatch(request("get_context"));
     assert(current_context.at("high_dpi_ratio").get<float>() == 1.5F);

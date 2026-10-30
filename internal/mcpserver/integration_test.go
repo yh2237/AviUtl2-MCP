@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,14 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/bridge"
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
+
+// bridgeError lets a fake bridge answer with a specific protocol error code.
+type bridgeError struct {
+	code    string
+	message string
+}
+
+func (e bridgeError) Error() string { return e.message }
 
 // startFakeBridge serves a loopback bridge socket that answers with handler output.
 func startFakeBridge(t *testing.T, handler func(method string, params json.RawMessage) (any, error)) string {
@@ -41,10 +50,16 @@ func startFakeBridge(t *testing.T, handler func(method string, params json.RawMe
 					}
 					response := protocol.Response{ID: request.ID, Version: protocol.Version}
 					result, callErr := handler(request.Method, request.Params)
-					if callErr != nil {
+					var coded bridgeError
+					switch {
+					case errors.As(callErr, &coded):
+						response.Error = &protocol.Error{Code: coded.code, Message: coded.message}
+					case callErr != nil:
 						response.Error = &protocol.Error{Code: "HOST_ERROR", Message: callErr.Error()}
-					} else if encoded, err := json.Marshal(result); err == nil {
-						response.Result = encoded
+					default:
+						if encoded, err := json.Marshal(result); err == nil {
+							response.Result = encoded
+						}
 					}
 					encoded, err := json.Marshal(response)
 					if err != nil || protocol.WriteFrame(conn, encoded) != nil {
@@ -117,6 +132,57 @@ func TestToolSchemasStayCompact(t *testing.T) {
 	}
 	if total > 64<<10 {
 		t.Fatalf("input schemas total %d bytes; keep tools/list below 64 KiB so clients do not spend their context on tool definitions", total)
+	}
+}
+
+func TestDiagnoseConnectionSurvivesMissingProject(t *testing.T) {
+	address := startFakeBridge(t, func(method string, _ json.RawMessage) (any, error) {
+		switch method {
+		case "diagnostics":
+			return protocol.DiagnosticsResult{
+				SessionID:           "s",
+				HostVersionText:     "2.1.11a",
+				RequiredVersionText: "2.1.10",
+				Capabilities: protocol.Capabilities{
+					LayerColor: protocol.Capability{Supported: false, RequiresVersionText: "2.1.13"},
+				},
+			}, nil
+		case "get_context":
+			return nil, bridgeError{code: "NO_PROJECT", message: "AviUtl2 has no project open; create or open a project first"}
+		}
+		return nil, errors.New("unexpected bridge method " + method)
+	})
+
+	session := connectTestSession(t, address)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "diagnose_connection", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("diagnose_connection: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("diagnose_connection failed without a project: %v", result.Content)
+	}
+	encoded, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output diagnosticsOutput
+	if err := json.Unmarshal(encoded, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.ContextError, "no project") {
+		t.Fatalf("context_error did not explain the failure: %+v", output)
+	}
+	if output.Bridge.HostVersionText != "2.1.11a" || output.Bridge.Capabilities.LayerColor.Supported {
+		t.Fatalf("bridge capabilities were lost: %+v", output.Bridge)
+	}
+	found := false
+	for _, limitation := range output.Limitations {
+		if strings.Contains(limitation, "no project") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("limitations did not mention the missing project: %v", output.Limitations)
 	}
 }
 

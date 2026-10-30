@@ -155,6 +155,45 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	if err := s.call("set_object_flags", s.args(map[string]any{"object_ids": []uint64{id}, "flags": map[string]any{"clipping_object": false}}), nil); err != nil {
 		return err
 	}
+	var overview protocol.SceneOverview
+	if err := s.call("inspect_scene", map[string]any{"include_empty": true}, &overview); err != nil {
+		return err
+	}
+	if overview.Context.SessionID != s.current.SessionID || overview.Scene.ObjectCount < 1 || len(overview.Layers) == 0 {
+		return fmt.Errorf("inspect_scene returned an unexpected payload: %+v", overview.Scene)
+	}
+	fmt.Printf("SCENE OVERVIEW objects=%d layers=%d markers=%d bpm=%d\n",
+		overview.Scene.ObjectCount, len(overview.Layers), len(overview.Markers), len(overview.BPM))
+	var diagnostics struct {
+		Bridge protocol.DiagnosticsResult `json:"bridge"`
+	}
+	if err := s.call("diagnose_connection", map[string]any{}, &diagnostics); err != nil {
+		return err
+	}
+	if diagnostics.Bridge.Capabilities.LayerColor.Supported {
+		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": "#3366cc", "dry_run": true}), nil); err != nil {
+			return err
+		}
+		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": "3366ccff"}), nil); err != nil {
+			return err
+		}
+		var layers struct {
+			Layers []protocol.Layer `json:"layers"`
+		}
+		if err := s.call("find_layers", map[string]any{"layer_start": 0, "include_empty": true}, &layers); err != nil {
+			return err
+		}
+		if len(layers.Layers) == 0 || layers.Layers[0].Color == nil || *layers.Layers[0].Color != "3366ccff" {
+			return fmt.Errorf("layer color was not applied: %+v", layers.Layers)
+		}
+		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": ""}), nil); err != nil {
+			return err
+		}
+		fmt.Println("PASS layer colors")
+	} else {
+		fmt.Printf("SKIP layer colors: AviUtl2 %s (needs %s or newer)\n",
+			diagnostics.Bridge.HostVersionText, diagnostics.Bridge.Capabilities.LayerColor.RequiresVersionText)
+	}
 	if err := s.call("render_preview", map[string]any{"frame": 0, "max_width": 320, "max_height": 180}, nil); err != nil {
 		return err
 	}

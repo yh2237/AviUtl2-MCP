@@ -50,6 +50,8 @@ Go側で通信をキャンセルすると、待機中のI/Oを中断して接続
 
 `inspect_scene`は1回の読み取りで、`context`、レイヤー毎の`object_count`と`first_frame` / `last_frame`、`color`、`markers`、`bpm`を返します。`inspect_timeline`と違いobject本体を返さないため、シーン全体の把握とGo側のポーリングを軽くできます。
 
+AviUtl2は起動直後やプロジェクト未作成の状態では編集データが初期化されておらず、その状態でSDKの編集情報へアクセスすると本体が不正参照で終了します。ブリッジはプロジェクト読み込みコールバックで利用可能になったことを記録し、それまではSDKへ触れずに`NO_PROJECT`（`retryable: true`）を返します。`ping`、`diagnostics`、`list_output_plugins`はこの状態でも応答します。
+
 `select_scene` / `create_scene` / `create_project` / `open_project` / `save_project` / `output_file`は通常の編集batchとは別に、読み取り区間でコンテキストを照合した後、SDKの読み取り／編集ロックの外で実行します。`select_scene`の対象は`params.target_scene_id`または`params.name`です。`context.scene_id`は変更前の照合用で、対象IDとは区別します。
 
 `set_object_flags`はbatch操作で、`flags`の指定項目だけを変更します。参照時はSDKのnative IDも照合し、UI削除やハンドルの再利用を検出した場合に`STALE_OBJECT`を返します。

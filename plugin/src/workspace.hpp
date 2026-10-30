@@ -1,6 +1,7 @@
 // Included inside the bridge's anonymous namespace after call_section().
 
 json list_scenes() {
+    require_project();
     SectionCall call{"list_scenes", json::object(), nullptr};
     const bool called = edit_handle->call_read_section_param(&call, [](void* parameter, EDIT_SECTION* edit) noexcept {
         auto* value = static_cast<SectionCall*>(parameter);
@@ -23,6 +24,7 @@ json list_scenes() {
 }
 
 void check_workspace_context(const json& expected) {
+    require_project();
     SectionCall call{"check_workspace_context", json::object(), expected};
     const bool called = edit_handle->call_read_section_param(&call, [](void* parameter, EDIT_SECTION* edit) noexcept {
         auto* value = static_cast<SectionCall*>(parameter);
@@ -107,11 +109,13 @@ void update_output_state(int state) {
 }
 
 void on_edit_state_change(void*) noexcept {
+    if (!project_loaded.load(std::memory_order_acquire)) return;
     try { update_output_state(edit_handle->get_edit_state()); }
     catch (...) { log_error(L"AviUtl2 MCP bridge: could not record output state"); }
 }
 
 json output_status(std::uint64_t id) {
+    require_project();
     const int state = edit_handle->get_edit_state();
     update_output_state(state);
     std::lock_guard lock(output_mutex);
@@ -192,6 +196,7 @@ json start_output(const json& params, const json& expected) {
 
 json workspace_operation(const std::string& method, const json& params, const json& expected) {
     if (method == "output_file") return start_output(params, expected);
+    require_project();
     check_workspace_context(expected);
     const auto before = generation.load(std::memory_order_acquire);
     bool changed_context = false;
@@ -239,6 +244,7 @@ json workspace_operation(const std::string& method, const json& params, const js
         } else success = edit_handle->save_project_file(file.c_str());
     }
     if (!success) throw BridgeError("HOST_REJECTED", "AviUtl2 rejected " + method + " (busy, invalid input, or cancelled)");
+    if (method == "create_project" || method == "open_project") project_loaded.store(true, std::memory_order_release);
     // SDK events normally invalidate IDs; also cover hosts that have not delivered the event yet.
     if (changed_context && generation.load(std::memory_order_acquire) == before) invalidate_objects();
     if (method == "select_scene" || method == "create_scene") return list_scenes();
