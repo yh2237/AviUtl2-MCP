@@ -8,7 +8,7 @@ MCPクライアント --stdio--> aviutl2-mcp.exe --TCP--> aviutl2-mcp-bridge.aux
 
 タイムラインの検索と分析、テキストや素材の追加、一括編集、整列、区間・マーカー・BPM操作、プレビュー比較、シーン・プロジェクト・出力、接続診断に対応します。編集ツールは`dry_run`と事前検査を備えます。
 
-40ツールを用途別にまとめています。全体像は`inspect_scene`、変更前の確認は`dry_run`、複数操作は`execute_batch`を使ってください。
+全体像は`inspect_scene`、変更前の確認は`dry_run`、複数操作は`execute_batch`を使ってください。
 
 ## インストール
 
@@ -23,7 +23,7 @@ Plugin\AviUtl2-MCP\aviutl2-mcp.exe
 - `AVIUTL2_MCP_BRIDGE_ADDR`: 接続先。既定値は`127.0.0.1:28552`
 - `AVIUTL2_MCP_BRIDGE_TIMEOUT`: タイムアウト。既定値は`5s`
 
-AviUtl2 2.1.10以降が必要です。2.1.13以降ではレイヤーの背景色、2.1.14以降では`high_dpi_ratio`も使えます。古い本体でも動くよう、新しいSDK関数は本体バージョンを判定してから呼びます。
+AviUtl2 2.1.10以降が必要です。
 
 ## 開発
 

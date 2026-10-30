@@ -56,10 +56,6 @@ objectとエフェクトの`native_id`はSDKの64bit IDを10進文字列で返�
 }
 ```
 
-ブリッジは`InitializePlugin`で受け取った本体バージョンが要件以上の場合のみ、該当するSDK関数を呼びます。古い本体では関数ポインタ自体が存在しないため、この判定は省略できません。
-
-`context.high_dpi_ratio`はAviUtl2 2.1.14以降でのみ返します。
-
 ## プロジェクト未作成の扱い
 
 AviUtl2は、プロジェクトを開くまで編集データを初期化しません。その状態でSDKの編集情報へアクセスすると本体が不正参照で終了します。ブリッジはプロジェクト読み込みコールバックで利用可能になったことを記録し、それまではSDKに触れずに`NO_PROJECT`（`retryable: true`）を返します。`ping`、`diagnostics`、`list_output_plugins`はこの状態でも応答します。
@@ -73,7 +69,5 @@ AviUtl2は、プロジェクトを開くまで編集データを初期化しま�
 `set_object_flags`はbatch操作で、指定したフラグだけを変更します。参照時はSDKのnative IDも照合し、UIでの削除やハンドルの再利用を検出すると`STALE_OBJECT`を返します。
 
 `output_file`は任意の`save_project_file`へ保存してから出力を開始し、`job`を返します。`get_output_status`は`params.job_id`（省略時は最新）に対応します。`CHANGE_EDIT_STATE`イベントと状態取得で`starting`、`running`、`ended`を記録します。出力開始の拒否は`rejected`です。SDKは出力の成否を返さないため、開始後の`outcome`は`unknown`です。
-
-Undoの実行とトラック値の組み立てはプロトコルでは代替しません。
 
 安定版前の内部仕様です。正確な定義は`internal/protocol`を参照してください。
