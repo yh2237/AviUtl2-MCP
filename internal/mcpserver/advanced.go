@@ -156,7 +156,7 @@ type layerInfoOutput struct {
 }
 
 func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "delete_objects", Description: "Preflight and delete selected, focused, or explicit objects with dry-run support."}, func(ctx context.Context, _ *mcp.CallToolRequest, input deleteObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "delete_objects", Description: "Preflight and delete selected, focused, or explicit objects with dry-run support."}, func(ctx context.Context, _ *mcp.CallToolRequest, input deleteObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -167,7 +167,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "trim_objects", Description: "Trim object starts or ends by absolute frames or deltas."}, func(ctx context.Context, _ *mcp.CallToolRequest, input trimObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "trim_objects", Description: "Trim object starts or ends by absolute frames or deltas."}, func(ctx context.Context, _ *mcp.CallToolRequest, input trimObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -200,7 +200,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "split_objects", Description: "Create intermediate sections at one or more absolute frames."}, func(ctx context.Context, _ *mcp.CallToolRequest, input splitObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "split_objects", Description: "Create intermediate sections at one or more absolute frames."}, func(ctx context.Context, _ *mcp.CallToolRequest, input splitObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -219,7 +219,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "edit_sections", Description: "Create, delete, or move intermediate sections on target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input editSectionsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "edit_sections", Description: "Create, delete, or move intermediate sections on target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input editSectionsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -253,7 +253,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_section_values", Description: "Sample filtered settings and tracks at every section start on one object."}, func(ctx context.Context, _ *mcp.CallToolRequest, input inspectSectionValuesInput) (*mcp.CallToolResult, sectionValuesOutput, error) {
+	addTool(server, &mcp.Tool{Name: "inspect_section_values", Description: "Sample filtered settings and tracks at every section start on one object."}, func(ctx context.Context, _ *mcp.CallToolRequest, input inspectSectionValuesInput) (*mcp.CallToolResult, sectionValuesOutput, error) {
 		objectResult, err := client.InspectObject(ctx, protocol.InspectObjectParams{ObjectID: input.ObjectID, IncludeEffects: true})
 		if err != nil {
 			return nil, sectionValuesOutput{}, err
@@ -269,7 +269,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return nil, sectionValuesOutput{Object: objectResult.Object, Sections: values}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "sequence_objects", Description: "Place objects consecutively in target order using a fixed gap."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "sequence_objects", Description: "Place objects consecutively in target order using a fixed gap."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 2)
 		if err != nil {
 			return nil, timelinePlanOutput{}, err
@@ -282,13 +282,13 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "pack_objects", Description: "Remove empty gaps between ordered objects without changing their lengths."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "pack_objects", Description: "Remove empty gaps between ordered objects without changing their lengths."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		return runPackedLayout(ctx, client, input, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "normalize_gaps", Description: "Set every gap between ordered objects to the requested frame count."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "normalize_gaps", Description: "Set every gap between ordered objects to the requested frame count."}, func(ctx context.Context, _ *mcp.CallToolRequest, input gapLayoutInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		return runPackedLayout(ctx, client, input, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "fit_objects", Description: "Fit object positions and lengths proportionally into an absolute frame range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input rangeLayoutInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "fit_objects", Description: "Fit object positions and lengths proportionally into an absolute frame range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input rangeLayoutInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -317,7 +317,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "move_to_layers", Description: "Distribute objects onto layers by order, object name, or first effect."}, func(ctx context.Context, _ *mcp.CallToolRequest, input moveToLayersInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "move_to_layers", Description: "Distribute objects onto layers by order, object name, or first effect."}, func(ctx context.Context, _ *mcp.CallToolRequest, input moveToLayersInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, timelinePlanOutput{}, err
@@ -348,7 +348,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "duplicate_pattern", Description: "Duplicate objects into a frame/layer grid while preserving effects and animation."}, func(ctx context.Context, _ *mcp.CallToolRequest, input duplicatePatternInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "duplicate_pattern", Description: "Duplicate objects into a frame/layer grid while preserving effects and animation."}, func(ctx context.Context, _ *mcp.CallToolRequest, input duplicatePatternInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -373,7 +373,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "replace_text", Description: "Search and replace text values across selected objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input replaceTextInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "replace_text", Description: "Search and replace text values across selected objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input replaceTextInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -397,7 +397,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "apply_properties", Description: "Copy filtered raw settings and animation data from one object to target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPropertiesInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "apply_properties", Description: "Copy filtered raw settings and animation data from one object to target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input applyPropertiesInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		targets, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -429,7 +429,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_track_values", Description: "Apply raw track values previously read from AviUtl2 to multiple objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setTracksInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "set_track_values", Description: "Apply raw track values previously read from AviUtl2 to multiple objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setTracksInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -450,7 +450,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "apply_animation_template", Description: "Copy a verified fade, slide, or zoom track from a template object to targets."}, func(ctx context.Context, _ *mcp.CallToolRequest, input animationTemplateInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "apply_animation_template", Description: "Copy a verified fade, slide, or zoom track from a template object to targets."}, func(ctx context.Context, _ *mcp.CallToolRequest, input animationTemplateInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		effect, item, err := templateTrack(input.Template)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -464,7 +464,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return runRawTrackPlan(ctx, client, input.mutationContext, input.targetSpec, trackUpdate{Effect: effect, Item: item, RawValue: raw}, input.DryRun)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "snap_objects_to_bpm", Description: "Snap object starts to the nearest BPM-grid subdivision."}, func(ctx context.Context, _ *mcp.CallToolRequest, input snapBPMInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "snap_objects_to_bpm", Description: "Snap object starts to the nearest BPM-grid subdivision."}, func(ctx context.Context, _ *mcp.CallToolRequest, input snapBPMInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, timelinePlanOutput{}, err
@@ -493,7 +493,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "find_empty_layers", Description: "Find empty layers in an inclusive range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input layerToolsInput) (*mcp.CallToolResult, layerInfoOutput, error) {
+	addTool(server, &mcp.Tool{Name: "find_empty_layers", Description: "Find empty layers in an inclusive range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input layerToolsInput) (*mcp.CallToolResult, layerInfoOutput, error) {
 		current, objects, err := readAllTimeline(ctx, client)
 		if err != nil {
 			return nil, layerInfoOutput{}, err
@@ -513,7 +513,7 @@ func addAdvancedEditTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return nil, layerInfoOutput{Context: current, Empty: empty}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "name_layers", Description: "Name a contiguous layer range using a prefix and one-based sequence."}, func(ctx context.Context, _ *mcp.CallToolRequest, input layerToolsInput) (*mcp.CallToolResult, layerInfoOutput, error) {
+	addTool(server, &mcp.Tool{Name: "name_layers", Description: "Name a contiguous layer range using a prefix and one-based sequence."}, func(ctx context.Context, _ *mcp.CallToolRequest, input layerToolsInput) (*mcp.CallToolResult, layerInfoOutput, error) {
 		if err := input.mutationContext.validate(); err != nil {
 			return nil, layerInfoOutput{}, err
 		}

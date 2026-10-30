@@ -46,7 +46,7 @@ type fitMediaDurationInput struct {
 }
 
 func addMediaTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "add_media_sequence", Description: "Preflight and place several media files sequentially in one Undo unit."}, func(ctx context.Context, _ *mcp.CallToolRequest, input addMediaSequenceInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "add_media_sequence", Description: "Preflight and place several media files sequentially in one Undo unit."}, func(ctx context.Context, _ *mcp.CallToolRequest, input addMediaSequenceInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		if err := input.mutationContext.validate(); err != nil {
 			return nil, operationPlanOutput{}, err
 		}
@@ -80,7 +80,7 @@ func addMediaTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "replace_media_bulk", Description: "Replace the media file on multiple objects while preserving placement and effects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input bulkReplaceMediaInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "replace_media_bulk", Description: "Replace the media file on multiple objects while preserving placement and effects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input bulkReplaceMediaInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -101,7 +101,7 @@ func addMediaTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "relink_media", Description: "Relink missing or moved media by matching file names under a directory."}, func(ctx context.Context, _ *mcp.CallToolRequest, input relinkMediaInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "relink_media", Description: "Relink missing or moved media by matching file names under a directory."}, func(ctx context.Context, _ *mcp.CallToolRequest, input relinkMediaInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -142,7 +142,7 @@ func addMediaTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "fit_objects_to_media", Description: "Resize media objects to their source duration using the current scene frame rate."}, func(ctx context.Context, _ *mcp.CallToolRequest, input fitMediaDurationInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "fit_objects_to_media", Description: "Resize media objects to their source duration using the current scene frame rate."}, func(ctx context.Context, _ *mcp.CallToolRequest, input fitMediaDurationInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err

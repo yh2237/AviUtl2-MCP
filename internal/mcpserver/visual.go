@@ -76,7 +76,7 @@ type previewStore struct {
 
 func addVisualTools(server *mcp.Server, client *bridge.Client) {
 	store := &previewStore{values: map[string]storedPreview{}}
-	mcp.AddTool(server, &mcp.Tool{Name: "capture_preview_snapshot", Description: "Capture an in-memory before-edit preview for later visual comparison."}, func(ctx context.Context, _ *mcp.CallToolRequest, input capturePreviewInput) (*mcp.CallToolResult, capturePreviewOutput, error) {
+	addTool(server, &mcp.Tool{Name: "capture_preview_snapshot", Description: "Capture an in-memory before-edit preview for later visual comparison."}, func(ctx context.Context, _ *mcp.CallToolRequest, input capturePreviewInput) (*mcp.CallToolResult, capturePreviewOutput, error) {
 		if input.Frame < 0 {
 			return nil, capturePreviewOutput{}, errors.New("frame must be non-negative")
 		}
@@ -111,7 +111,7 @@ func addVisualTools(server *mcp.Server, client *bridge.Client) {
 		content := &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: data, MIMEType: "image/png"}}}
 		return content, capturePreviewOutput{SnapshotID: id, Frame: input.Frame, SessionID: preview.SessionID, Generation: preview.Generation, Width: preview.Width, Height: preview.Height}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "render_snapshot_comparison", Description: "Compare a captured before-edit snapshot with a newly rendered after-edit frame."}, func(ctx context.Context, _ *mcp.CallToolRequest, input compareSnapshotInput) (*mcp.CallToolResult, contactSheetOutput, error) {
+	addTool(server, &mcp.Tool{Name: "render_snapshot_comparison", Description: "Compare a captured before-edit snapshot with a newly rendered after-edit frame."}, func(ctx context.Context, _ *mcp.CallToolRequest, input compareSnapshotInput) (*mcp.CallToolResult, contactSheetOutput, error) {
 		store.Lock()
 		before, ok := store.values[input.SnapshotID]
 		store.Unlock()
@@ -136,7 +136,7 @@ func addVisualTools(server *mcp.Server, client *bridge.Client) {
 		content := &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: data, MIMEType: "image/png"}}}
 		return content, contactSheetOutput{Width: width, Height: height, SessionID: preview.SessionID, Generation: preview.Generation, Cells: cells}, nil
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "render_range_contact_sheet", Description: "Sample an inclusive frame range evenly into a labeled contact sheet."}, func(ctx context.Context, _ *mcp.CallToolRequest, input rangeContactSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
+	addTool(server, &mcp.Tool{Name: "render_range_contact_sheet", Description: "Sample an inclusive frame range evenly into a labeled contact sheet."}, func(ctx context.Context, _ *mcp.CallToolRequest, input rangeContactSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
 		if input.Start < 0 || input.End < input.Start {
 			return nil, contactSheetOutput{}, errors.New("invalid frame range")
 		}
@@ -156,13 +156,13 @@ func addVisualTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return renderContactSheet(ctx, client, contactSheetInput{Frames: frames, Columns: input.Columns, CellWidth: input.CellWidth, CellHeight: input.CellHeight, ObjectID: input.ObjectID, ApplyEffects: input.ApplyEffects, LabelFrames: input.LabelFrames})
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "render_change_comparison", Description: "Render two frames side by side for before/after visual comparison."}, func(ctx context.Context, _ *mcp.CallToolRequest, input compareFramesInput) (*mcp.CallToolResult, contactSheetOutput, error) {
+	addTool(server, &mcp.Tool{Name: "render_change_comparison", Description: "Render two frames side by side for before/after visual comparison."}, func(ctx context.Context, _ *mcp.CallToolRequest, input compareFramesInput) (*mcp.CallToolResult, contactSheetOutput, error) {
 		if input.BeforeFrame < 0 || input.AfterFrame < 0 {
 			return nil, contactSheetOutput{}, errors.New("frames must be non-negative")
 		}
 		return renderContactSheet(ctx, client, contactSheetInput{Frames: []int{input.BeforeFrame, input.AfterFrame}, Columns: 2, CellWidth: input.CellWidth, CellHeight: input.CellHeight, ObjectID: input.ObjectID, ApplyEffects: input.ApplyEffects, LabelFrames: true})
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "render_collision_sheet", Description: "Find overlaps and render their frames as a labeled contact sheet."}, func(ctx context.Context, _ *mcp.CallToolRequest, input collisionSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
+	addTool(server, &mcp.Tool{Name: "render_collision_sheet", Description: "Find overlaps and render their frames as a labeled contact sheet."}, func(ctx context.Context, _ *mcp.CallToolRequest, input collisionSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
 		_, objects, err := readFilteredTimeline(ctx, client, timelineAnalysisInput{LayerStart: input.LayerStart, LayerEnd: input.LayerEnd, FrameStart: input.FrameStart, FrameEnd: input.FrameEnd})
 		if err != nil {
 			return nil, contactSheetOutput{}, err

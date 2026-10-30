@@ -87,7 +87,7 @@ type plannedMove struct {
 }
 
 func addTimelineTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "shift_objects", Description: "Move several objects by frame/layer deltas after checking final and transient collisions."},
+	addTool(server, &mcp.Tool{Name: "shift_objects", Description: "Move several objects by frame/layer deltas after checking final and transient collisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input shiftObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 			if err != nil {
@@ -103,7 +103,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 			return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "align_objects", Description: "Align object start, center, or end frames in one Undo unit."},
+	addTool(server, &mcp.Tool{Name: "align_objects", Description: "Align object start, center, or end frames in one Undo unit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input alignObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 2)
 			if err != nil {
@@ -128,7 +128,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 			return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "distribute_objects", Description: "Distribute object start frames evenly between two anchors."},
+	addTool(server, &mcp.Tool{Name: "distribute_objects", Description: "Distribute object start frames evenly between two anchors."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input distributeObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 3)
 			if err != nil {
@@ -158,7 +158,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 			return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "insert_time", Description: "Insert empty time by shifting objects beginning at or after a frame."},
+	addTool(server, &mcp.Tool{Name: "insert_time", Description: "Insert empty time by shifting objects beginning at or after a frame."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input insertTimeInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, timelinePlanOutput{}, err
@@ -192,7 +192,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 			return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "stagger_objects", Description: "Place ordered objects at fixed frame and layer steps."},
+	addTool(server, &mcp.Tool{Name: "stagger_objects", Description: "Place ordered objects at fixed frame and layer steps."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input staggerObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 2)
 			if err != nil {
@@ -212,7 +212,7 @@ func addTimelineTools(server *mcp.Server, client *bridge.Client) {
 			return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "replace_media", Description: "Replace an object's media file while preserving its placement, effects, and animation."},
+	addTool(server, &mcp.Tool{Name: "replace_media", Description: "Replace an object's media file while preserving its placement, effects, and animation."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input replaceMediaInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, timelinePlanOutput{}, err

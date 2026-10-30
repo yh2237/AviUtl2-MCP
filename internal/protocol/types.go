@@ -46,37 +46,39 @@ type PingResult struct {
 }
 
 type Context struct {
-	Background       string  `json:"background"`
-	SessionID        string  `json:"session_id"`
-	Generation       uint64  `json:"generation"`
-	SceneID          int     `json:"scene_id"`
-	SceneName        string  `json:"scene_name,omitempty"`
-	EditState        int     `json:"edit_state"`
-	Width            int     `json:"width"`
-	Height           int     `json:"height"`
-	Rate             int     `json:"rate"`
-	Scale            int     `json:"scale"`
-	SampleRate       int     `json:"sample_rate"`
-	Frame            int     `json:"frame"`
-	Layer            int     `json:"layer"`
-	FrameMax         int     `json:"frame_max"`
-	LayerMax         int     `json:"layer_max"`
-	DisplayFrame     int     `json:"display_frame_start"`
-	DisplayLayer     int     `json:"display_layer_start"`
-	DisplayFrameNum  int     `json:"display_frame_num"`
-	DisplayLayerNum  int     `json:"display_layer_num"`
-	SelectRangeStart int     `json:"select_range_start"`
-	SelectRangeEnd   int     `json:"select_range_end"`
-	GridBPMTempo     float32 `json:"grid_bpm_tempo"`
-	GridBPMBeat      int     `json:"grid_bpm_beat"`
-	GridBPMOffset    float32 `json:"grid_bpm_offset"`
+	Background       string   `json:"background"`
+	SessionID        string   `json:"session_id"`
+	Generation       uint64   `json:"generation"`
+	SceneID          int      `json:"scene_id"`
+	SceneName        string   `json:"scene_name,omitempty"`
+	EditState        int      `json:"edit_state"`
+	HighDPIRatio     *float32 `json:"high_dpi_ratio,omitempty"`
+	Width            int      `json:"width"`
+	Height           int      `json:"height"`
+	Rate             int      `json:"rate"`
+	Scale            int      `json:"scale"`
+	SampleRate       int      `json:"sample_rate"`
+	Frame            int      `json:"frame"`
+	Layer            int      `json:"layer"`
+	FrameMax         int      `json:"frame_max"`
+	LayerMax         int      `json:"layer_max"`
+	DisplayFrame     int      `json:"display_frame_start"`
+	DisplayLayer     int      `json:"display_layer_start"`
+	DisplayFrameNum  int      `json:"display_frame_num"`
+	DisplayLayerNum  int      `json:"display_layer_num"`
+	SelectRangeStart int      `json:"select_range_start"`
+	SelectRangeEnd   int      `json:"select_range_end"`
+	GridBPMTempo     float32  `json:"grid_bpm_tempo"`
+	GridBPMBeat      int      `json:"grid_bpm_beat"`
+	GridBPMOffset    float32  `json:"grid_bpm_offset"`
 }
 
 type Layer struct {
-	Index   int    `json:"index"`
-	Name    string `json:"name,omitempty"`
-	Enabled bool   `json:"enabled"`
-	Locked  bool   `json:"locked"`
+	Index   int     `json:"index"`
+	Name    string  `json:"name,omitempty"`
+	Enabled bool    `json:"enabled"`
+	Locked  bool    `json:"locked"`
+	Color   *string `json:"color,omitempty"`
 }
 
 type Effect struct {
@@ -115,6 +117,43 @@ type TimelineResult struct {
 	Layers    []Layer  `json:"layers"`
 	Objects   []Object `json:"objects"`
 	Truncated bool     `json:"truncated"`
+}
+
+type InspectSceneParams struct {
+	LayerStart   int  `json:"layer_start,omitempty"`
+	LayerEnd     *int `json:"layer_end,omitempty"`
+	IncludeEmpty bool `json:"include_empty,omitempty"`
+	MaxObjects   int  `json:"max_objects,omitempty"`
+}
+
+type SceneLayerSummary struct {
+	Color       *string `json:"color,omitempty"`
+	FirstFrame  *int    `json:"first_frame"`
+	LastFrame   *int    `json:"last_frame"`
+	Index       int     `json:"index"`
+	Name        string  `json:"name,omitempty"`
+	ObjectCount int     `json:"object_count"`
+	Enabled     bool    `json:"enabled"`
+	Locked      bool    `json:"locked"`
+}
+
+type SceneTotals struct {
+	FirstFrame  *int `json:"first_frame"`
+	LastFrame   *int `json:"last_frame"`
+	ObjectCount int  `json:"object_count"`
+	LayerMax    int  `json:"layer_max"`
+	FrameMax    int  `json:"frame_max"`
+	Truncated   bool `json:"truncated"`
+}
+
+// SceneOverview is the whole-scene orientation payload: one bridge round trip
+// instead of separate context, timeline, marker, and BPM reads.
+type SceneOverview struct {
+	Context Context             `json:"context"`
+	Scene   SceneTotals         `json:"scene"`
+	Layers  []SceneLayerSummary `json:"layers"`
+	Markers []Marker            `json:"markers"`
+	BPM     []BPMPoint          `json:"bpm"`
 }
 
 type InspectObjectParams struct {
@@ -257,13 +296,27 @@ type ModuleInfo struct {
 	Information string `json:"information,omitempty"`
 }
 
+type Capability struct {
+	Supported           bool   `json:"supported"`
+	RequiresVersion     uint32 `json:"requires_aviutl2_version"`
+	RequiresVersionText string `json:"requires_aviutl2_version_text,omitempty"`
+}
+
+type Capabilities struct {
+	LayerColor   Capability `json:"layer_color"`
+	HighDPIRatio Capability `json:"high_dpi_ratio"`
+}
+
 type DiagnosticsResult struct {
-	SessionID       string       `json:"session_id"`
-	Generation      uint64       `json:"generation"`
-	ProtocolVersion uint32       `json:"protocol_version"`
-	RequiredVersion uint32       `json:"required_aviutl2_version"`
-	HostVersion     uint32       `json:"host_version"`
-	Modules         []ModuleInfo `json:"modules,omitempty"`
+	SessionID           string       `json:"session_id"`
+	Generation          uint64       `json:"generation"`
+	ProtocolVersion     uint32       `json:"protocol_version"`
+	RequiredVersion     uint32       `json:"required_aviutl2_version"`
+	RequiredVersionText string       `json:"required_aviutl2_version_text,omitempty"`
+	HostVersion         uint32       `json:"host_version"`
+	HostVersionText     string       `json:"host_version_text,omitempty"`
+	Capabilities        Capabilities `json:"capabilities"`
+	Modules             []ModuleInfo `json:"modules,omitempty"`
 }
 
 type PropertyUpdate struct {
@@ -321,6 +374,7 @@ type BatchOperation struct {
 	Length      int                `json:"length,omitempty"`
 	Size        float64            `json:"size,omitempty"`
 	Color       string             `json:"color,omitempty"`
+	LayerColor  *string            `json:"layer_color,omitempty"`
 	Name        *string            `json:"name,omitempty"`
 	Effect      string             `json:"effect,omitempty"`
 	EffectIndex int                `json:"effect_index,omitempty"`

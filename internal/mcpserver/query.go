@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -46,6 +47,13 @@ type timelineAnalysisInput struct {
 	LayerEnd   *int `json:"layer_end,omitempty"`
 	FrameStart *int `json:"frame_start,omitempty"`
 	FrameEnd   *int `json:"frame_end,omitempty"`
+}
+
+type inspectSceneInput struct {
+	LayerStart   int  `json:"layer_start,omitempty"`
+	LayerEnd     *int `json:"layer_end,omitempty"`
+	IncludeEmpty bool `json:"include_empty,omitempty"`
+	MaxObjects   int  `json:"max_objects,omitempty" jsonschema:"default and maximum 1000"`
 }
 
 type timelineGap struct {
@@ -106,7 +114,34 @@ type outOfRangeOutput struct {
 }
 
 func addQueryTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "find_objects", Description: "Find objects by selection, focus, name, effect, media path, layer, or frame range."},
+	addTool(server, &mcp.Tool{Name: "inspect_scene", Description: "Get the whole scene in one call: context, per-layer object counts and frame ranges, layer colors, markers, and the BPM grid. Use this first; use inspect_timeline for individual objects."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectSceneInput) (*mcp.CallToolResult, protocol.SceneOverview, error) {
+			if input.LayerStart < 0 || (input.LayerEnd != nil && *input.LayerEnd < input.LayerStart) {
+				return nil, protocol.SceneOverview{}, errors.New("layer range must be ordered and non-negative")
+			}
+			if input.MaxObjects == 0 {
+				input.MaxObjects = protocol.MaxTimelineObjects
+			}
+			if input.MaxObjects < 1 || input.MaxObjects > protocol.MaxTimelineObjects {
+				return nil, protocol.SceneOverview{}, fmt.Errorf("max_objects must be between 1 and %d", protocol.MaxTimelineObjects)
+			}
+			result, err := client.InspectScene(ctx, protocol.InspectSceneParams(input))
+			if err != nil {
+				return nil, protocol.SceneOverview{}, err
+			}
+			if result.Layers == nil {
+				result.Layers = []protocol.SceneLayerSummary{}
+			}
+			if result.Markers == nil {
+				result.Markers = []protocol.Marker{}
+			}
+			if result.BPM == nil {
+				result.BPM = []protocol.BPMPoint{}
+			}
+			return nil, result, nil
+		})
+
+	addTool(server, &mcp.Tool{Name: "find_objects", Description: "Find objects by selection, focus, name, effect, media path, layer, or frame range."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input findObjectsInput) (*mcp.CallToolResult, findObjectsOutput, error) {
 			if input.Limit == 0 {
 				input.Limit = 100
@@ -197,7 +232,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, output, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "summarize_timeline", Description: "Summarize object counts and occupied ranges per layer."},
+	addTool(server, &mcp.Tool{Name: "summarize_timeline", Description: "Summarize object counts and occupied ranges per layer."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, timelineSummaryOutput, error) {
 			current, objects, err := readFilteredTimeline(ctx, client, input)
 			if err != nil {
@@ -231,7 +266,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, out, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "find_gaps", Description: "Find empty frame ranges between objects on each layer."},
+	addTool(server, &mcp.Tool{Name: "find_gaps", Description: "Find empty frame ranges between objects on each layer."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, gapsOutput, error) {
 			current, objects, err := readFilteredTimeline(ctx, client, input)
 			if err != nil {
@@ -256,7 +291,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, gapsOutput{Context: current, Gaps: gaps}, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "find_overlaps", Description: "Find overlapping objects on the same layer."},
+	addTool(server, &mcp.Tool{Name: "find_overlaps", Description: "Find overlapping objects on the same layer."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, overlapsOutput, error) {
 			current, objects, err := readFilteredTimeline(ctx, client, input)
 			if err != nil {
@@ -275,7 +310,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, overlapsOutput{Context: current, Overlaps: values}, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "list_used_effects", Description: "Count effect usage in the current scene."},
+	addTool(server, &mcp.Tool{Name: "list_used_effects", Description: "Count effect usage in the current scene."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, usedEffectsOutput, error) {
 			current, objects, err := readAllTimelineWithEffects(ctx, client)
 			if err != nil {
@@ -290,7 +325,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, usedEffectsOutput{Context: current, Effects: values}, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "list_used_media", Description: "List media paths and the objects that reference them."},
+	addTool(server, &mcp.Tool{Name: "list_used_media", Description: "List media paths and the objects that reference them."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, usedMediaOutput, error) {
 			current, objects, err := readAllTimeline(ctx, client)
 			if err != nil {
@@ -300,7 +335,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, usedMediaOutput{Context: current, Media: values}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "find_missing_media", Description: "Find referenced media files that do not exist on the MCP server machine."},
+	addTool(server, &mcp.Tool{Name: "find_missing_media", Description: "Find referenced media files that do not exist on the MCP server machine."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, missingMediaOutput, error) {
 			current, objects, err := readAllTimeline(ctx, client)
 			if err != nil {
@@ -320,7 +355,7 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, missingMediaOutput{Context: current, Missing: missing}, nil
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "find_out_of_scene_objects", Description: "Find objects outside an explicit intended frame or layer range."},
+	addTool(server, &mcp.Tool{Name: "find_out_of_scene_objects", Description: "Find objects outside an explicit intended frame or layer range."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, outOfRangeOutput, error) {
 			current, objects, err := readAllTimeline(ctx, client)
 			if err != nil {

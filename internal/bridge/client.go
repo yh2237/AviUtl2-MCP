@@ -88,6 +88,10 @@ func (c *Client) InspectTimeline(ctx context.Context, params protocol.InspectTim
 	return call[protocol.TimelineResult](c, ctx, "inspect_timeline", params, nil)
 }
 
+func (c *Client) InspectScene(ctx context.Context, params protocol.InspectSceneParams) (protocol.SceneOverview, error) {
+	return call[protocol.SceneOverview](c, ctx, "inspect_scene", params, nil)
+}
+
 func (c *Client) InspectObject(ctx context.Context, params protocol.InspectObjectParams) (protocol.ObjectResult, error) {
 	return call[protocol.ObjectResult](c, ctx, "inspect_object", params, nil)
 }

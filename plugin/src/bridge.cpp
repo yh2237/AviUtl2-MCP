@@ -35,6 +35,7 @@
 
 #include "logger2.h"
 #include "plugin2.h"
+#include "filter2.h"
 
 namespace {
 
@@ -45,7 +46,14 @@ constexpr std::uint32_t kMaxMessageSize = 4U << 20;
 constexpr std::uint16_t kDefaultPort = 28552;
 constexpr int kMaxTimelineObjects = 1000;
 constexpr int kMaxBatchOperations = 100;
-constexpr std::uint32_t kRequiredVersion = 2011000;
+
+// AviUtl2本体のバージョン番号は メジャー*1000000 + マイナー*10000 + ビルド*100 + 改訂 で表現されます。
+// kRequiredVersionはプラグインが動作する最低バージョンです。
+// それ以降に追加されたSDK関数は、EDIT_SECTION / EDIT_HANDLE構造体の末尾に追記される為、
+// 古い本体では参照自体が不正メモリになるので、必ずhost_versionで判定してから利用します。
+constexpr std::uint32_t kRequiredVersion = 2011000;       // 2.1.10: シーン・プロジェクト・出力API
+constexpr std::uint32_t kLayerColorVersion = 2011300;     // 2.1.13: get_layer_color / set_layer_color
+constexpr std::uint32_t kHighDpiRatioVersion = 2011400;   // 2.1.14: get_high_dpi_ratio
 
 COMMON_PLUGIN_TABLE plugin_table{
     L"AviUtl2 MCP Bridge",
@@ -85,6 +93,41 @@ private:
 void log_error(const wchar_t* message) {
     if (logger != nullptr) {
         logger->error(logger, message);
+    }
+}
+
+std::string version_text(std::uint32_t version) {
+    if (version == 0) {
+        return "unknown";
+    }
+    std::ostringstream stream;
+    stream << version / 1000000 << '.' << (version / 10000) % 100 << '.' << (version / 100) % 100;
+    const std::uint32_t revision = version % 100;
+    if (revision != 0) {
+        stream << static_cast<char>('a' + (revision - 1));
+    }
+    return stream.str();
+}
+
+// 2.1.13で追加されたレイヤー背景色APIが利用できるか。
+bool supports_layer_color() noexcept {
+    return host_version >= kLayerColorVersion;
+}
+
+// 2.1.14で追加された高DPI拡大比率APIが利用できるか。
+bool supports_high_dpi_ratio() noexcept {
+    return host_version >= kHighDpiRatioVersion;
+}
+
+[[noreturn]] void throw_unsupported_version(const char* feature, std::uint32_t required) {
+    throw BridgeError("UNSUPPORTED_VERSION",
+                      std::string(feature) + " requires AviUtl2 " + version_text(required) +
+                          " or newer, but AviUtl2 reports " + version_text(host_version));
+}
+
+void require_layer_color() {
+    if (!supports_layer_color()) {
+        throw_unsupported_version("layer colors", kLayerColorVersion);
     }
 }
 
@@ -136,6 +179,74 @@ bool is_hex_color(const std::string& value) {
                (character >= 'A' && character <= 'F');
     });
 }
+
+bool is_hex_digits(const std::string& value, std::size_t length) {
+    return value.size() == length && std::all_of(value.begin(), value.end(), [](unsigned char character) {
+        return (character >= '0' && character <= '9') ||
+               (character >= 'a' && character <= 'f') ||
+               (character >= 'A' && character <= 'F');
+    });
+}
+
+std::uint8_t hex_byte(const std::string& value, std::size_t offset) {
+    const auto digit = [](char character) -> int {
+        if (character >= '0' && character <= '9') return character - '0';
+        if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+        return character - 'A' + 10;
+    };
+    return static_cast<std::uint8_t>(digit(value[offset]) * 16 + digit(value[offset + 1]));
+}
+
+std::string rgba_hex(unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+    constexpr char hex[] = "0123456789abcdef";
+    std::string value;
+    value.reserve(8);
+    for (const auto channel : {r, g, b, a}) {
+        value += hex[channel >> 4];
+        value += hex[channel & 15];
+    }
+    return value;
+}
+
+std::string pixel_rgba_hex(const PIXEL_RGBA& color) {
+    return rgba_hex(color.r, color.g, color.b, color.a);
+}
+
+// レイヤーの背景色を"RRGGBBAA"または既定色ならnullで返します。
+json layer_color_json(EDIT_SECTION* edit, int layer) {
+    if (!supports_layer_color() || edit == nullptr) {
+        return nullptr;
+    }
+    const PIXEL_RGBA color = edit->get_layer_color(layer);
+    if (color.a == 0) {
+        return nullptr;  // 既定色(透明指定)
+    }
+    return pixel_rgba_hex(color);
+}
+
+// "RRGGBB" / "RRGGBBAA" / 空文字・"none"・"default" をPIXEL_RGBAへ変換します。
+PIXEL_RGBA parse_layer_color(const std::string& value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const char character : value) {
+        if (character != ' ' && character != '\t') {
+            normalized += character;
+        }
+    }
+    if (normalized.empty() || normalized == "none" || normalized == "default" || normalized == "clear") {
+        return PIXEL_RGBA{0, 0, 0, 0};
+    }
+    if (is_hex_digits(normalized, 6)) {
+        return PIXEL_RGBA{hex_byte(normalized, 0), hex_byte(normalized, 2), hex_byte(normalized, 4), 255};
+    }
+    if (is_hex_digits(normalized, 8)) {
+        return PIXEL_RGBA{hex_byte(normalized, 0), hex_byte(normalized, 2), hex_byte(normalized, 4),
+                          hex_byte(normalized, 6)};
+    }
+    throw BridgeError("INVALID_ARGUMENT",
+                      "layer color must be six or eight hexadecimal digits, or empty/\"default\" to clear it");
+}
+
 
 void invalidate_objects() noexcept {
     std::lock_guard lock(registry_mutex);
@@ -300,15 +411,11 @@ json context_json(EDIT_SECTION* edit = nullptr) {
         {"grid_bpm_tempo", info.grid_bpm_tempo},
         {"grid_bpm_beat", info.grid_bpm_beat},
         {"grid_bpm_offset", info.grid_bpm_offset},
-        {"background", [&info] {
-            constexpr char hex[] = "0123456789abcdef";
-            std::string value;
-            for (auto channel : {info.background.r, info.background.g, info.background.b, info.background.a}) {
-                value += hex[channel >> 4]; value += hex[channel & 15];
-            }
-            return value;
-        }()},
+        {"background", rgba_hex(info.background.r, info.background.g, info.background.b, info.background.a)},
     };
+    if (supports_high_dpi_ratio()) {
+        output["high_dpi_ratio"] = edit_handle->get_high_dpi_ratio();
+    }
     if (edit != nullptr) {
         output["scene_name"] = wide_to_utf8(edit->get_scene_name());
     }
@@ -436,6 +543,7 @@ void inspect_timeline(SectionCall* call, EDIT_SECTION* edit) {
             {"name", wide_to_utf8(edit->get_layer_name(layer))},
             {"enabled", edit->get_layer_enable(layer)},
             {"locked", edit->get_layer_lock(layer)},
+            {"color", layer_color_json(edit, layer)},
         });
         int cursor = frame_start;
         while (cursor <= frame_end) {
@@ -664,7 +772,7 @@ void inspect_object_values(SectionCall* call, EDIT_SECTION* edit) {
     };
 }
 
-void get_markers(SectionCall* call, EDIT_SECTION* edit) {
+json markers_json(EDIT_SECTION* edit) {
     const int count = std::max(0, edit->get_mark_frame_list(nullptr, 0));
     std::vector<int> frames(static_cast<std::size_t>(count));
     const int received = count == 0 ? 0 : edit->get_mark_frame_list(frames.data(), count);
@@ -673,10 +781,10 @@ void get_markers(SectionCall* call, EDIT_SECTION* edit) {
         const int frame = frames[static_cast<std::size_t>(index)];
         markers.push_back({{"frame", frame}, {"memo", wide_to_utf8(edit->get_mark_frame_memo(frame))}});
     }
-    call->result = {{"context", context_json(edit)}, {"markers", std::move(markers)}};
+    return markers;
 }
 
-void get_bpm_grid(SectionCall* call, EDIT_SECTION* edit) {
+json bpm_json(EDIT_SECTION* edit) {
     const int count = std::max(0, edit->get_grid_bpm_list(nullptr, 0, sizeof(BPM_INFO)));
     std::vector<BPM_INFO> points(static_cast<std::size_t>(count));
     const int received = count == 0 ? 0 : edit->get_grid_bpm_list(points.data(), count, sizeof(BPM_INFO));
@@ -686,7 +794,93 @@ void get_bpm_grid(SectionCall* call, EDIT_SECTION* edit) {
         result.push_back({{"tempo", point.tempo}, {"beat", point.beat},
                           {"start", point.start}, {"offset", point.offset}});
     }
-    call->result = {{"context", context_json(edit)}, {"points", std::move(result)}};
+    return result;
+}
+
+void get_markers(SectionCall* call, EDIT_SECTION* edit) {
+    call->result = {{"context", context_json(edit)}, {"markers", markers_json(edit)}};
+}
+
+void get_bpm_grid(SectionCall* call, EDIT_SECTION* edit) {
+    call->result = {{"context", context_json(edit)}, {"points", bpm_json(edit)}};
+}
+
+// 編集前の全体像を1回の読み取りで返します。
+// inspect_timelineと違いobject本体を返さず、レイヤー毎の件数とフレーム範囲だけを返します。
+void inspect_scene(SectionCall* call, EDIT_SECTION* edit) {
+    EDIT_INFO info{};
+    edit_handle->get_edit_info(&info, sizeof(info));
+    const int layer_start = call->params.value("layer_start", 0);
+    const bool has_layer_end = call->params.contains("layer_end") && !call->params.at("layer_end").is_null();
+    const int layer_end = has_layer_end ? call->params.at("layer_end").get<int>() : info.layer_max;
+    if (layer_start < 0 || layer_end < layer_start || layer_end - layer_start > 99) {
+        throw BridgeError("INVALID_ARGUMENT", "invalid layer range");
+    }
+    const bool include_empty = call->params.value("include_empty", false);
+    const int max_objects = std::clamp(call->params.value("max_objects", 1000), 1, kMaxTimelineObjects);
+
+    json layers = json::array();
+    int total_objects = 0;
+    int first_frame = -1;
+    int last_frame = -1;
+    bool truncated = false;
+    for (int layer = layer_start; layer <= layer_end && !truncated; ++layer) {
+        int layer_objects = 0;
+        int layer_first = -1;
+        int layer_last = -1;
+        int cursor = 0;
+        while (!truncated) {
+            OBJECT_HANDLE object = edit->find_object(layer, cursor);
+            if (object == nullptr) {
+                break;
+            }
+            const OBJECT_LAYER_FRAME placement = edit->get_object_layer_frame(object);
+            if (placement.end < cursor) {
+                ++cursor;  // 念のための前進保証
+                continue;
+            }
+            if (total_objects >= max_objects) {
+                truncated = true;
+                break;
+            }
+            ++layer_objects;
+            ++total_objects;
+            if (layer_first < 0 || placement.start < layer_first) layer_first = placement.start;
+            if (placement.end > layer_last) layer_last = placement.end;
+            if (first_frame < 0 || placement.start < first_frame) first_frame = placement.start;
+            if (placement.end > last_frame) last_frame = placement.end;
+            const int next = placement.end + 1;
+            cursor = next > cursor ? next : cursor + 1;
+        }
+        if (!include_empty && layer_objects == 0) {
+            continue;
+        }
+        layers.push_back({
+            {"index", layer},
+            {"name", wide_to_utf8(edit->get_layer_name(layer))},
+            {"enabled", edit->get_layer_enable(layer)},
+            {"locked", edit->get_layer_lock(layer)},
+            {"color", layer_color_json(edit, layer)},
+            {"object_count", layer_objects},
+            {"first_frame", layer_first < 0 ? json(nullptr) : json(layer_first)},
+            {"last_frame", layer_last < 0 ? json(nullptr) : json(layer_last)},
+        });
+    }
+
+    call->result = {
+        {"context", context_json(edit)},
+        {"scene", {
+             {"object_count", total_objects},
+             {"first_frame", first_frame < 0 ? json(nullptr) : json(first_frame)},
+             {"last_frame", last_frame < 0 ? json(nullptr) : json(last_frame)},
+             {"layer_max", info.layer_max},
+             {"frame_max", info.frame_max},
+             {"truncated", truncated},
+         }},
+        {"layers", std::move(layers)},
+        {"markers", markers_json(edit)},
+        {"bpm", bpm_json(edit)},
+    };
 }
 
 void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
@@ -694,6 +888,8 @@ void read_section_callback(void* parameter, EDIT_SECTION* edit) noexcept {
     try {
         if (call->method == "get_context") {
             call->result = context_json(edit);
+        } else if (call->method == "inspect_scene") {
+            inspect_scene(call, edit);
         } else if (call->method == "inspect_timeline") {
             inspect_timeline(call, edit);
         } else if (call->method == "inspect_object") {
@@ -1036,6 +1232,17 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             }
             if (operation.contains("locked") && !operation.at("locked").is_null()) {
                 edit->set_layer_lock(layer, operation.at("locked").get<bool>());
+                changed = true;
+            }
+            if (operation.contains("layer_color")) {
+                require_layer_color();
+                const json& value = operation.at("layer_color");
+                if (!value.is_string()) {
+                    throw BridgeError("INVALID_ARGUMENT", "layer_color must be a string; use an empty string to restore the default color");
+                }
+                const PIXEL_RGBA color = parse_layer_color(value.get<std::string>());
+                edit->set_layer_color(layer, color);
+                result["color"] = color.a == 0 ? json(nullptr) : json(pixel_rgba_hex(color));
                 changed = true;
             }
             if (!changed) {
@@ -1444,8 +1651,20 @@ json dispatch(const json& request) {
         });
         if (!call.error.empty()) throw BridgeError("HOST_ERROR", call.error);
         return {{"session_id", session_id}, {"generation", generation.load()},
-                {"protocol_version", kProtocolVersion}, {"required_aviutl2_version", kRequiredVersion},
-                {"host_version", host_version}, {"modules", std::move(call.values)}};
+                {"protocol_version", kProtocolVersion},
+                {"required_aviutl2_version", kRequiredVersion},
+                {"required_aviutl2_version_text", version_text(kRequiredVersion)},
+                {"host_version", host_version},
+                {"host_version_text", version_text(host_version)},
+                {"capabilities", {
+                     {"layer_color", {{"supported", supports_layer_color()},
+                                      {"requires_aviutl2_version", kLayerColorVersion},
+                                      {"requires_aviutl2_version_text", version_text(kLayerColorVersion)}}},
+                     {"high_dpi_ratio", {{"supported", supports_high_dpi_ratio()},
+                                         {"requires_aviutl2_version", kHighDpiRatioVersion},
+                                         {"requires_aviutl2_version_text", version_text(kHighDpiRatioVersion)}}},
+                 }},
+                {"modules", std::move(call.values)}};
     }
     if (method == "list_effects") {
         EnumerationCall call;

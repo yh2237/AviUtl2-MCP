@@ -28,6 +28,28 @@ Go側で通信をキャンセルすると、待機中のI/Oを中断して接続
 
 読み取りにはマーカー、BPM、モジュール診断、`list_scenes`、`list_output_plugins`、`get_output_status`を含みます。objectとエフェクトの`native_id`はSDKの64bit IDを10進文字列で返します。コンテキストの`background`は8桁の`RRGGBBAA`です。
 
+`diagnostics`は`host_version`（数値と`host_version_text`）と`capabilities`を返します。`capabilities`の各機能は`supported`と`requires_aviutl2_version`を持ち、ブリッジは`InitializePlugin`で受け取った本体バージョンが要件以上の場合のみ該当するSDK関数を呼びます。古い本体では関数ポインタ自体が存在しないため、この判定は省略できません。
+
+```json
+{
+  "host_version": 2011300,
+  "host_version_text": "2.1.13",
+  "capabilities": {
+    "layer_color": {
+      "supported": true,
+      "requires_aviutl2_version": 2011300,
+      "requires_aviutl2_version_text": "2.1.13"
+    }
+  }
+}
+```
+
+レイヤーの背景色は`inspect_timeline`の`layers[].color`で`RRGGBBAA`を返します。既定色の場合はキーを省略します。設定はbatch操作`set_layer_state`の`layer_color`で行います。空文字は既定色へ戻す指定で、キー自体が無い場合は色を変更しません。8桁のうちアルファ値が`ff`以外の場合は既定色として扱われます（SDK仕様）。AviUtl2 2.1.13未満では`UNSUPPORTED_VERSION`を返します。
+
+`context.high_dpi_ratio`はAviUtl2 2.1.14以降でのみ返します。
+
+`inspect_scene`は1回の読み取りで、`context`、レイヤー毎の`object_count`と`first_frame` / `last_frame`、`color`、`markers`、`bpm`を返します。`inspect_timeline`と違いobject本体を返さないため、シーン全体の把握とGo側のポーリングを軽くできます。
+
 `select_scene` / `create_scene` / `create_project` / `open_project` / `save_project` / `output_file`は通常の編集batchとは別に、読み取り区間でコンテキストを照合した後、SDKの読み取り／編集ロックの外で実行します。`select_scene`の対象は`params.target_scene_id`または`params.name`です。`context.scene_id`は変更前の照合用で、対象IDとは区別します。
 
 `set_object_flags`はbatch操作で、`flags`の指定項目だけを変更します。参照時はSDKのnative IDも照合し、UI削除やハンドルの再利用を検出した場合に`STALE_OBJECT`を返します。

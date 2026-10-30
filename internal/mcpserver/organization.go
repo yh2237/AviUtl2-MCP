@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -61,8 +63,32 @@ type findLayersOutput struct {
 	Layers  []protocol.Layer `json:"layers"`
 }
 
+type setLayerColorsInput struct {
+	mutationContext
+	LayerStart int      `json:"layer_start"`
+	LayerEnd   *int     `json:"layer_end,omitempty"`
+	Color      string   `json:"color,omitempty"`
+	Colors     []string `json:"colors,omitempty"`
+	DryRun     bool     `json:"dry_run,omitempty"`
+}
+
+var layerColorPattern = regexp.MustCompile(`^([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
+
+// normalizeLayerColor accepts "#RRGGBB", "RRGGBBAA", or a keyword that clears the color.
+func normalizeLayerColor(value string) (string, error) {
+	trimmed := strings.TrimPrefix(strings.TrimSpace(value), "#")
+	switch strings.ToLower(trimmed) {
+	case "", "default", "none", "clear":
+		return "", nil
+	}
+	if !layerColorPattern.MatchString(trimmed) {
+		return "", fmt.Errorf("layer color %q must be six or eight hexadecimal digits, or empty/\"default\" to clear it", value)
+	}
+	return strings.ToLower(trimmed), nil
+}
+
 func addOrganizationTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "edit_markers", Description: "Set, clear, or move several markers in one Undo unit."}, func(ctx context.Context, _ *mcp.CallToolRequest, input editMarkersInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "edit_markers", Description: "Set, clear, or move several markers in one Undo unit."}, func(ctx context.Context, _ *mcp.CallToolRequest, input editMarkersInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		if err := input.mutationContext.validate(); err != nil {
 			return nil, operationPlanOutput{}, err
 		}
@@ -85,7 +111,7 @@ func addOrganizationTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "split_at_markers", Description: "Create intermediate sections where markers fall inside target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input markerObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "split_at_markers", Description: "Create intermediate sections where markers fall inside target objects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input markerObjectsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, operationPlanOutput{}, err
@@ -105,7 +131,7 @@ func addOrganizationTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "place_objects_at_markers", Description: "Move ordered objects to marker frames."}, func(ctx context.Context, _ *mcp.CallToolRequest, input markerObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "place_objects_at_markers", Description: "Move ordered objects to marker frames."}, func(ctx context.Context, _ *mcp.CallToolRequest, input markerObjectsInput) (*mcp.CallToolResult, timelinePlanOutput, error) {
 		objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
 		if err != nil {
 			return nil, timelinePlanOutput{}, err
@@ -123,18 +149,18 @@ func addOrganizationTools(server *mcp.Server, client *bridge.Client) {
 		}
 		return executeMovePlan(ctx, client, input.mutationContext, moves, input.DryRun)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_bpm_grid", Description: "Set the primary BPM grid tempo, beat, and offset."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setBPMInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "set_bpm_grid", Description: "Set the primary BPM grid tempo, beat, and offset."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setBPMInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		tempo, beat, offset := input.Tempo, input.Beat, input.Offset
 		return executeOperationPlan(ctx, client, input.mutationContext, []protocol.BatchOperation{{Op: "set_grid_bpm", Tempo: &tempo, Beat: &beat, Offset: &offset}}, input.DryRun, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_bpm_grid_list", Description: "Replace the complete variable-tempo BPM grid."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setBPMListInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "set_bpm_grid_list", Description: "Replace the complete variable-tempo BPM grid."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setBPMListInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		return executeOperationPlan(ctx, client, input.mutationContext, []protocol.BatchOperation{{Op: "set_grid_bpm_list", BPMPoints: input.Points}}, input.DryRun, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_scene_settings", Description: "Update current scene name, dimensions, frame rate, or sample rate. AviUtl2 cannot Undo scene settings."}, func(ctx context.Context, _ *mcp.CallToolRequest, input sceneSettingsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+	addTool(server, &mcp.Tool{Name: "set_scene_settings", Description: "Update current scene name, dimensions, frame rate, or sample rate. AviUtl2 cannot Undo scene settings."}, func(ctx context.Context, _ *mcp.CallToolRequest, input sceneSettingsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 		op := protocol.BatchOperation{Op: "set_scene_settings", Name: input.Name, Width: input.Width, Height: input.Height, Rate: input.Rate, Scale: input.Scale, SampleRate: input.SampleRate}
 		return executeOperationPlan(ctx, client, input.mutationContext, []protocol.BatchOperation{op}, input.DryRun, false)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "find_layers", Description: "Find current-scene layers by name and occupancy."}, func(ctx context.Context, _ *mcp.CallToolRequest, input findLayersInput) (*mcp.CallToolResult, findLayersOutput, error) {
+	addTool(server, &mcp.Tool{Name: "find_layers", Description: "Find current-scene layers by name and occupancy."}, func(ctx context.Context, _ *mcp.CallToolRequest, input findLayersInput) (*mcp.CallToolResult, findLayersOutput, error) {
 		current, objects, err := readAllTimeline(ctx, client)
 		if err != nil {
 			return nil, findLayersOutput{}, err
@@ -168,6 +194,46 @@ func addOrganizationTools(server *mcp.Server, client *bridge.Client) {
 			}
 		}
 		return nil, findLayersOutput{Context: current, Layers: layers}, nil
+	})
+	addTool(server, &mcp.Tool{Name: "set_layer_colors", Description: "Color-code layer backgrounds for visual organization (AviUtl2 2.1.13+). Sets one color for a layer range or one color per layer; accepts RRGGBB/RRGGBBAA and clears with an empty string."}, func(ctx context.Context, _ *mcp.CallToolRequest, input setLayerColorsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
+		if err := input.mutationContext.validate(); err != nil {
+			return nil, operationPlanOutput{}, err
+		}
+		if input.LayerStart < 0 {
+			return nil, operationPlanOutput{}, errors.New("layer_start must be non-negative")
+		}
+		end := input.LayerStart
+		if input.LayerEnd != nil {
+			end = *input.LayerEnd
+		}
+		if end < input.LayerStart {
+			return nil, operationPlanOutput{}, errors.New("layer_end must not be smaller than layer_start")
+		}
+		count := end - input.LayerStart + 1
+		if count > protocol.MaxBatchOperations {
+			return nil, operationPlanOutput{}, fmt.Errorf("layer range covers %d layers; set at most %d colors per batch", count, protocol.MaxBatchOperations)
+		}
+		requested := make([]string, count)
+		if len(input.Colors) > 0 {
+			if len(input.Colors) != count {
+				return nil, operationPlanOutput{}, fmt.Errorf("colors must contain exactly one entry per layer (%d), or omit it and use color", count)
+			}
+			copy(requested, input.Colors)
+		} else {
+			for index := range requested {
+				requested[index] = input.Color
+			}
+		}
+		ops := make([]protocol.BatchOperation, 0, count)
+		for offset, raw := range requested {
+			color, err := normalizeLayerColor(raw)
+			if err != nil {
+				return nil, operationPlanOutput{}, err
+			}
+			layer := input.LayerStart + offset
+			ops = append(ops, protocol.BatchOperation{Op: "set_layer_state", Layer: &layer, LayerColor: &color})
+		}
+		return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, false)
 	})
 }
 

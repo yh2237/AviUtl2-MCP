@@ -42,7 +42,7 @@ type contactSheetOutput struct {
 }
 
 func addContactSheetTool(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "render_contact_sheet", Description: "Render up to sixteen frames into one PNG for efficient visual review."},
+	addTool(server, &mcp.Tool{Name: "render_contact_sheet", Description: "Render up to sixteen frames into one PNG for efficient visual review."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input contactSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
 			return renderContactSheet(ctx, client, input)
 		})

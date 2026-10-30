@@ -224,6 +224,16 @@ bool mock_media_info(LPCWSTR, MEDIA_INFO* info, int) {
 void mock_set_layer_name(int, LPCWSTR) {}
 void mock_set_layer_enable(int, bool) {}
 void mock_set_layer_lock(int, bool) {}
+PIXEL_RGBA mock_layer_colors[128]{};
+bool mock_section_locked = false;
+PIXEL_RGBA mock_get_layer_color(int layer) {
+    return layer >= 0 && layer < 128 ? mock_layer_colors[layer] : PIXEL_RGBA{0, 0, 0, 0};
+}
+void mock_set_layer_color(int layer, PIXEL_RGBA color) {
+    assert(mock_section_locked);
+    if (layer >= 0 && layer < 128) mock_layer_colors[layer] = color;
+}
+float mock_high_dpi_ratio() { return 1.5F; }
 void mock_set_scene_name(LPCWSTR) {}
 void mock_set_scene_size(int width, int height) { mock_info.width = width; mock_info.height = height; }
 void mock_set_scene_rate(int rate, int scale) { mock_info.rate = rate; mock_info.scale = scale; }
@@ -252,7 +262,6 @@ void mock_set_bpm_list(BPM_INFO* points, int count, int) {
 
 void mock_get_edit_info(EDIT_INFO* info, int) { *info = mock_info; }
 int mock_edit_state() { return EDIT_HANDLE::EDIT_STATE_EDIT; }
-bool mock_section_locked = false;
 bool mock_read(void* param, void (*callback)(void*, EDIT_SECTION*)) {
     mock_section_locked = true;
     callback(param, &mock_section);
@@ -302,6 +311,8 @@ void configure_mock() {
     invalidate_objects();
     generation.store(10);
     session_id = "test-session";
+    host_version = kHighDpiRatioVersion;  // AviUtl2 2.1.14以降を模擬する
+    for (auto& color : mock_layer_colors) color = PIXEL_RGBA{0, 0, 0, 0};
     mock_create_object(L"テキスト", 0, 0, 30);
 
     mock_section.find_object = mock_find_object;
@@ -349,6 +360,8 @@ void configure_mock() {
     mock_section.set_layer_name = mock_set_layer_name;
     mock_section.set_layer_enable = mock_set_layer_enable;
     mock_section.set_layer_lock = mock_set_layer_lock;
+    mock_section.get_layer_color = mock_get_layer_color;
+    mock_section.set_layer_color = mock_set_layer_color;
     mock_section.set_scene_name = mock_set_scene_name;
     mock_section.set_scene_size = mock_set_scene_size;
     mock_section.set_scene_frame_rate = mock_set_scene_rate;
@@ -367,6 +380,7 @@ void configure_mock() {
 
     mock_handle.get_edit_info = mock_get_edit_info;
     mock_handle.get_edit_state = mock_edit_state;
+    mock_handle.get_high_dpi_ratio = mock_high_dpi_ratio;
     mock_handle.call_read_section_param = mock_read;
     mock_handle.call_edit_section_param = mock_edit;
     mock_handle.enum_effect_name = mock_enum_effect;
@@ -405,6 +419,76 @@ int main() {
     assert(timeline.at("objects").size() == 1);
     const std::uint64_t object_id = timeline.at("objects").at(0).at("id").get<std::uint64_t>();
 
+    // 2.1.13以降: レイヤー背景色の取得と設定
+    assert(timeline.at("layers").at(0).at("color").is_null());
+    mock_layer_colors[0] = PIXEL_RGBA{0x11, 0x22, 0x33, 0xff};
+    const json colored = dispatch(request("inspect_timeline", {
+        {"layer_start", 0}, {"layer_end", 0}, {"frame_start", 0}, {"frame_end", 0}, {"max_objects", 1},
+    }));
+    assert(colored.at("layers").at(0).at("color").get<std::string>() == "112233ff");
+
+    const json layer_colors = dispatch(request("execute_batch", {{"operations", json::array({
+        {{"op", "set_layer_state"}, {"layer", 1}, {"layer_color", "FF8800"}},
+        {{"op", "set_layer_state"}, {"layer", 2}, {"layer_color", "11223344"}},
+        {{"op", "set_layer_state"}, {"layer", 0}, {"layer_color", ""}},
+    })}}, true));
+    assert(layer_colors.at("results").at(0).at("color").get<std::string>() == "ff8800ff");
+    assert(layer_colors.at("results").at(1).at("color").get<std::string>() == "11223344");
+    assert(layer_colors.at("results").at(2).at("color").is_null());
+    assert(mock_layer_colors[1].r == 0xff && mock_layer_colors[1].g == 0x88 && mock_layer_colors[1].a == 0xff);
+    assert(mock_layer_colors[2].a == 0x44);
+    assert(mock_layer_colors[0].a == 0);
+
+    bool invalid_color_rejected = false;
+    try {
+        (void)dispatch(request("execute_batch", {{"operations", json::array({
+            {{"op", "set_layer_state"}, {"layer", 1}, {"layer_color", "red"}},
+        })}}, true));
+    } catch (const BridgeError& error) {
+        invalid_color_rejected = error.code() == "INVALID_ARGUMENT";
+    }
+    assert(invalid_color_rejected);
+
+    // 2.1.13未満の本体ではレイヤー背景色APIに触れず、明示的なエラーを返す
+    host_version = 2011200;  // AviUtl2 2.1.12
+    const json plain_layers = dispatch(request("inspect_timeline", {
+        {"layer_start", 0}, {"layer_end", 0}, {"frame_start", 0}, {"frame_end", 0}, {"max_objects", 1},
+    }));
+    assert(plain_layers.at("layers").at(0).at("color").is_null());
+    assert(!plain_layers.at("context").contains("high_dpi_ratio"));
+    bool old_host_rejected = false;
+    try {
+        (void)dispatch(request("execute_batch", {{"operations", json::array({
+            {{"op", "set_layer_state"}, {"layer", 1}, {"layer_color", "ff8800"}},
+        })}}, true));
+    } catch (const BridgeError& error) {
+        old_host_rejected = error.code() == "UNSUPPORTED_VERSION" &&
+                            std::string(error.what()).find("2.1.13") != std::string::npos;
+    }
+    assert(old_host_rejected);
+    host_version = kHighDpiRatioVersion;
+    const json current_context = dispatch(request("get_context"));
+    assert(current_context.at("high_dpi_ratio").get<float>() == 1.5F);
+
+    // 1回の読み取りで全体像を返す
+    const json overview = dispatch(request("inspect_scene"));
+    assert(overview.at("scene").at("object_count").get<int>() == 1);
+    assert(!overview.at("scene").at("truncated").get<bool>());
+    assert(overview.at("layers").size() == 1);
+    assert(overview.at("layers").at(0).at("index").get<int>() == 0);
+    assert(overview.at("layers").at(0).at("object_count").get<int>() == 1);
+    assert(overview.at("layers").at(0).at("first_frame").get<int>() == 0);
+    assert(overview.at("layers").at(0).at("last_frame").get<int>() == 29);
+    assert(overview.at("layers").at(0).at("color").is_null());
+    assert(overview.at("markers").at(0).at("memo") == "beat");
+    assert(overview.at("bpm").at(0).at("tempo").get<float>() == 120.0F);
+
+    const json empty_layers = dispatch(request("inspect_scene", {{"include_empty", true}, {"layer_end", 2}}));
+    assert(empty_layers.at("layers").size() == 3);
+    assert(empty_layers.at("layers").at(1).at("object_count").get<int>() == 0);
+    assert(empty_layers.at("layers").at(1).at("color").get<std::string>() == "ff8800ff");
+    assert(empty_layers.at("layers").at(1).at("first_frame").is_null());
+
     const json objects = dispatch(request("inspect_objects", {
         {"object_ids", json::array({object_id})}, {"include_effects", true},
     }));
@@ -431,6 +515,11 @@ int main() {
     assert(bpm.at("points").at(0).at("tempo").get<float>() == 120.0F);
     const json diagnostics = dispatch(request("diagnostics"));
     assert(diagnostics.at("modules").size() == 1);
+    assert(diagnostics.at("host_version_text").get<std::string>() == "2.1.14");
+    assert(diagnostics.at("capabilities").at("layer_color").at("supported").get<bool>());
+    assert(diagnostics.at("capabilities").at("high_dpi_ratio").at("supported").get<bool>());
+    assert(diagnostics.at("capabilities").at("layer_color").at("requires_aviutl2_version_text").get<std::string>() ==
+           "2.1.13");
 
     const json added = dispatch(request("add_text", {
         {"text", "hello"}, {"layer", 1}, {"frame", 10}, {"length", 20},

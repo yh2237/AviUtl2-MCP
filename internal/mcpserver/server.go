@@ -210,22 +210,38 @@ type previewOutput struct {
 	Generation uint64 `json:"generation"`
 }
 
+// addTool registers a tool while keeping output schemas out of tools/list.
+//
+// Almost every result embeds the same large types (protocol.Context, object lists,
+// and []protocol.BatchOperation plans). Declaring them per tool repeated roughly
+// 240 KB of schema in every MCP session, so results are still returned as
+// structuredContent JSON, but the redundant per-tool schema is omitted.
+func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
+	mcp.AddTool(server, tool, func(ctx context.Context, request *mcp.CallToolRequest, input In) (*mcp.CallToolResult, any, error) {
+		result, output, err := handler(ctx, request, input)
+		if err != nil {
+			return result, nil, err
+		}
+		return result, output, nil
+	})
+}
+
 func New(client *bridge.Client, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aviutl2-mcp", Version: version}, nil)
 
-	mcp.AddTool(server, &mcp.Tool{Name: "ping", Description: "Check whether the native bridge is loaded in a running AviUtl2 instance."},
+	addTool(server, &mcp.Tool{Name: "ping", Description: "Check whether the native bridge is loaded in a running AviUtl2 instance."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, pingOutput, error) {
 			result, err := client.Ping(ctx)
 			return nil, pingOutput(result), err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "get_context", Description: "Get scene, cursor, selection range, display range, dimensions, and concurrency tokens. Call this before mutations."},
+	addTool(server, &mcp.Tool{Name: "get_context", Description: "Get scene, cursor, selection range, display range, dimensions, and concurrency tokens. Call this before mutations."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, contextOutput, error) {
 			result, err := client.GetContext(ctx)
 			return nil, contextOutput{Context: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_timeline", Description: "Inspect objects and layer states in a bounded timeline range."},
+	addTool(server, &mcp.Tool{Name: "inspect_timeline", Description: "Inspect objects and layer states in a bounded timeline range."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectTimelineInput) (*mcp.CallToolResult, timelineOutput, error) {
 			if input.LayerStart < 0 || input.LayerEnd < input.LayerStart || input.LayerEnd-input.LayerStart > 99 {
 				return nil, timelineOutput{}, errors.New("layer range must be ordered, non-negative, and at most 100 layers")
@@ -243,13 +259,13 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, timelineOutput{Timeline: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_object", Description: "Inspect one object, including placement, sections, alias data, and effect states."},
+	addTool(server, &mcp.Tool{Name: "inspect_object", Description: "Inspect one object, including placement, sections, alias data, and effect states."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectInput) (*mcp.CallToolResult, objectOutput, error) {
 			result, err := client.InspectObject(ctx, protocol.InspectObjectParams(input))
 			return nil, objectOutput{Object: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_objects", Description: "Inspect up to one hundred objects in one bridge read section."},
+	addTool(server, &mcp.Tool{Name: "inspect_objects", Description: "Inspect up to one hundred objects in one bridge read section."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectsInput) (*mcp.CallToolResult, objectsOutput, error) {
 			if len(input.ObjectIDs) < 1 || len(input.ObjectIDs) > protocol.MaxBatchOperations {
 				return nil, objectsOutput{}, errors.New("object_ids must contain between 1 and 100 entries")
@@ -258,7 +274,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, objectsOutput{Objects: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "inspect_object_values", Description: "Inspect every effect item on an object, including raw values, track metadata, and values sampled at a frame."},
+	addTool(server, &mcp.Tool{Name: "inspect_object_values", Description: "Inspect every effect item on an object, including raw values, track metadata, and values sampled at a frame."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectValuesInput) (*mcp.CallToolResult, objectValuesOutput, error) {
 			if input.ObjectID == 0 || (input.Frame != nil && *input.Frame < 0) {
 				return nil, objectValuesOutput{}, errors.New("object_id is required and frame must be non-negative")
@@ -267,13 +283,13 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, objectValuesOutput{Values: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "list_effects", Description: "List effect definitions registered in AviUtl2."},
+	addTool(server, &mcp.Tool{Name: "list_effects", Description: "List effect definitions registered in AviUtl2."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, effectsOutput, error) {
 			result, err := client.ListEffects(ctx)
 			return nil, effectsOutput{Effects: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "list_effect_items", Description: "List configurable item names and types for an effect."},
+	addTool(server, &mcp.Tool{Name: "list_effect_items", Description: "List configurable item names and types for an effect."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input effectItemsInput) (*mcp.CallToolResult, effectItemsOutput, error) {
 			if strings.TrimSpace(input.Effect) == "" {
 				return nil, effectItemsOutput{}, errors.New("effect is required")
@@ -282,13 +298,13 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, effectItemsOutput{Effect: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "get_selection", Description: "Get the focus object and all currently selected timeline objects."},
+	addTool(server, &mcp.Tool{Name: "get_selection", Description: "Get the focus object and all currently selected timeline objects."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, selectionOutput, error) {
 			result, err := client.GetSelection(ctx)
 			return nil, selectionOutput{Selection: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "preflight_media", Description: "Check whether AviUtl2 supports a media file and return its metadata without adding it."},
+	addTool(server, &mcp.Tool{Name: "preflight_media", Description: "Check whether AviUtl2 supports a media file and return its metadata without adding it."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input preflightMediaInput) (*mcp.CallToolResult, mediaOutput, error) {
 			if strings.TrimSpace(input.File) == "" {
 				return nil, mediaOutput{}, errors.New("file is required")
@@ -297,7 +313,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mediaOutput{Media: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "add_text", Description: "Add a text object. Requires current session_id, generation, and scene_id to prevent editing stale context."},
+	addTool(server, &mcp.Tool{Name: "add_text", Description: "Add a text object. Requires current session_id, generation, and scene_id to prevent editing stale context."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input addTextInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -319,7 +335,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "add_media", Description: "Add a local media file to the timeline using optimistic context checks."},
+	addTool(server, &mcp.Tool{Name: "add_media", Description: "Add a local media file to the timeline using optimistic context checks."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input addMediaInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -331,7 +347,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "update_object", Description: "Move, rename, or update effect item values on an existing object in one Undo unit."},
+	addTool(server, &mcp.Tool{Name: "update_object", Description: "Move, rename, or update effect item values on an existing object in one Undo unit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input updateObjectInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -347,7 +363,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "delete_object", Description: "Delete an object in the expected AviUtl2 scene and generation."},
+	addTool(server, &mcp.Tool{Name: "delete_object", Description: "Delete an object in the expected AviUtl2 scene and generation."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input deleteObjectInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -359,7 +375,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "duplicate_objects", Description: "Duplicate objects with all effects and animation. Repetitions are created in one Undo unit."},
+	addTool(server, &mcp.Tool{Name: "duplicate_objects", Description: "Duplicate objects with all effects and animation. Repetitions are created in one Undo unit."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input duplicateObjectsInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -396,7 +412,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 	addEffectTool(server, client, "delete_effect", "Delete an effect by zero-based index.")
 	addEffectTool(server, client, "set_effect_state", "Enable, lock, or reorder an effect by zero-based index.")
 
-	mcp.AddTool(server, &mcp.Tool{Name: "execute_batch", Description: "Preflight and execute up to 100 operations in one AviUtl2 edit section and Undo unit. Supports dry-run, timeout, progress, and result inspection."},
+	addTool(server, &mcp.Tool{Name: "execute_batch", Description: "Preflight and execute up to 100 operations in one AviUtl2 edit section and Undo unit. Supports dry-run, timeout, progress, and result inspection."},
 		func(ctx context.Context, request *mcp.CallToolRequest, input batchInput) (*mcp.CallToolResult, batchOutput, error) {
 			started := time.Now()
 			output := batchOutput{DryRun: input.DryRun, Operations: input.Operations}
@@ -436,7 +452,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, output, err
 		})
 
-	mcp.AddTool(server, &mcp.Tool{Name: "render_preview", Description: "Render a bounded PNG preview of the scene or one object at a frame."},
+	addTool(server, &mcp.Tool{Name: "render_preview", Description: "Render a bounded PNG preview of the scene or one object at a frame."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input previewInput) (*mcp.CallToolResult, previewOutput, error) {
 			if input.Frame < 0 {
 				return nil, previewOutput{}, errors.New("frame must be non-negative")
@@ -477,7 +493,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 }
 
 func addEffectTool(server *mcp.Server, client *bridge.Client, name, description string) {
-	mcp.AddTool(server, &mcp.Tool{Name: name, Description: description},
+	addTool(server, &mcp.Tool{Name: name, Description: description},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input effectMutationInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
@@ -575,8 +591,13 @@ func validateBatchOperations(operations []protocol.BatchOperation) error {
 				return fmt.Errorf("%s requires non-negative section and frame", prefix)
 			}
 		case "set_layer_state":
-			if operation.Layer == nil || *operation.Layer < 0 || (operation.Name == nil && operation.Enabled == nil && operation.Locked == nil) {
+			if operation.Layer == nil || *operation.Layer < 0 || (operation.Name == nil && operation.Enabled == nil && operation.Locked == nil && operation.LayerColor == nil) {
 				return fmt.Errorf("%s requires a layer and at least one state update", prefix)
+			}
+			if operation.LayerColor != nil {
+				if _, err := normalizeLayerColor(*operation.LayerColor); err != nil {
+					return fmt.Errorf("%s: %w", prefix, err)
+				}
 			}
 		case "set_scene_settings":
 			if operation.Name == nil && operation.Width == nil && operation.Height == nil && operation.Rate == nil && operation.Scale == nil && operation.SampleRate == nil {

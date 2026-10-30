@@ -98,12 +98,12 @@ func validateWorkspacePath(file string) error {
 }
 
 func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
-	mcp.AddTool(server, &mcp.Tool{Name: "list_scenes", Description: "List all scene IDs and names with the active scene and current concurrency tokens."},
+	addTool(server, &mcp.Tool{Name: "list_scenes", Description: "List all scene IDs and names with the active scene and current concurrency tokens."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, protocol.ScenesResult, error) {
 			result, err := client.ListScenes(ctx)
 			return nil, result, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "select_scene", Description: "Select a scene by ID or unique exact name. Returns the scene list and fresh context for subsequent edits; old object IDs expire."},
+	addTool(server, &mcp.Tool{Name: "select_scene", Description: "Select a scene by ID or unique exact name. Returns the scene list and fresh context for subsequent edits; old object IDs expire."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input selectSceneInput) (*mcp.CallToolResult, protocol.ScenesResult, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, protocol.ScenesResult{}, err
@@ -118,7 +118,7 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 			result, err := client.SelectScene(ctx, input.SelectSceneParams, input.expected())
 			return nil, result, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "create_scene", Description: "Create and select a scene. Omitted dimensions, rate, sample rate, and RRGGBBAA background inherit the current scene. Returns scenes and fresh context."},
+	addTool(server, &mcp.Tool{Name: "create_scene", Description: "Create and select a scene. Omitted dimensions, rate, sample rate, and RRGGBBAA background inherit the current scene. Returns scenes and fresh context."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input createSceneInput) (*mcp.CallToolResult, protocol.ScenesResult, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, protocol.ScenesResult{}, err
@@ -136,7 +136,7 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 			result, err := client.CreateScene(ctx, input.CreateSceneParams, input.expected())
 			return nil, result, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_object_flags", Description: "Apply group/camera-control and clipping flags to explicit, selected, or focused objects in one Undo unit. Omitted flags are preserved; supports dry_run and returns updated objects."},
+	addTool(server, &mcp.Tool{Name: "set_object_flags", Description: "Apply group/camera-control and clipping flags to explicit, selected, or focused objects in one Undo unit. Omitted flags are preserved; supports dry_run and returns updated objects."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input setObjectFlagsInput) (*mcp.CallToolResult, operationPlanOutput, error) {
 			if input.Flags.Empty() {
 				return nil, operationPlanOutput{}, errors.New("at least one flag update is required")
@@ -151,7 +151,7 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 			}
 			return executeOperationPlan(ctx, client, input.mutationContext, ops, input.DryRun, true)
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "create_project", Description: "Create a new project, replacing the current project. Omitted scene settings inherit the current scene. show_confirm enables AviUtl2's save/cancel dialog (default false). Returns fresh context."},
+	addTool(server, &mcp.Tool{Name: "create_project", Description: "Create a new project, replacing the current project. Omitted scene settings inherit the current scene. show_confirm enables AviUtl2's save/cancel dialog (default false). Returns fresh context."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input createProjectInput) (*mcp.CallToolResult, protocol.ProjectResult, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, protocol.ProjectResult{}, err
@@ -171,7 +171,7 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 		if method == "open_project" {
 			description = "Open an absolute project file path, replacing the current project. show_confirm enables AviUtl2's save/cancel dialog (default false). Returns fresh context; old object IDs expire."
 		}
-		mcp.AddTool(server, &mcp.Tool{Name: method, Description: description},
+		addTool(server, &mcp.Tool{Name: method, Description: description},
 			func(ctx context.Context, _ *mcp.CallToolRequest, input projectFileInput) (*mcp.CallToolResult, protocol.ProjectResult, error) {
 				if err := input.mutationContext.validate(); err != nil {
 					return nil, protocol.ProjectResult{}, err
@@ -187,12 +187,12 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 				return nil, result, err
 			})
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "list_output_plugins", Description: "List registered output plugin names for output_file."},
+	addTool(server, &mcp.Tool{Name: "list_output_plugins", Description: "List registered output plugin names for output_file."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, outputPluginsOutput, error) {
 			result, err := client.ListOutputPlugins(ctx)
 			return nil, outputPluginsOutput{Plugins: result}, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "output_file", Description: "Start asynchronous output of the current scene using a registered output plugin and its current settings. Optional save_project_file saves a project snapshot first. Returns a job ID for get_output_status; acceptance is not output completion."},
+	addTool(server, &mcp.Tool{Name: "output_file", Description: "Start asynchronous output of the current scene using a registered output plugin and its current settings. Optional save_project_file saves a project snapshot first. Returns a job ID for get_output_status; acceptance is not output completion."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input outputFileInput) (*mcp.CallToolResult, protocol.OutputStatusResult, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, protocol.OutputStatusResult{}, err
@@ -218,7 +218,7 @@ func addWorkspaceTools(server *mcp.Server, client *bridge.Client) {
 			result, err := client.OutputFile(ctx, input.OutputFileParams, input.expected())
 			return nil, result, err
 		})
-	mcp.AddTool(server, &mcp.Tool{Name: "get_output_status", Description: "Get an output job (latest when job_id is omitted), including after reconnect/timeout. ended means the SDK left output state; success, cancellation, and failure cannot be distinguished, so outcome remains unknown. Keeps the latest 20 jobs."},
+	addTool(server, &mcp.Tool{Name: "get_output_status", Description: "Get an output job (latest when job_id is omitted), including after reconnect/timeout. ended means the SDK left output state; success, cancellation, and failure cannot be distinguished, so outcome remains unknown. Keeps the latest 20 jobs."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input outputStatusInput) (*mcp.CallToolResult, protocol.OutputStatusResult, error) {
 			result, err := client.GetOutputStatus(ctx, input.JobID)
 			return nil, result, err

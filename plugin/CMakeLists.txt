@@ -13,6 +13,11 @@ if(NOT sdk_workspace_api)
   message(FATAL_ERROR "Use the official AviUtl2 SDK dated 2026-09-19 or newer (scene/project/output APIs are required)")
 endif()
 
+file(STRINGS "${AVIUTL2_SDK_DIR}/plugin2.h" sdk_layer_color_api REGEX "set_layer_color" LIMIT_COUNT 1)
+if(NOT sdk_layer_color_api)
+  message(FATAL_ERROR "Use the official AviUtl2 SDK dated 2026-10-10 or newer (layer color APIs are required)")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(
   nlohmann_json

@@ -2,12 +2,16 @@
 
 変更操作には、直前の`get_context`が返す`session_id`、`generation`、`scene_id`が必要です。object IDも同じコンテキスト内でのみ有効です。
 
+作業を始めるときは`inspect_scene`を使ってください。コンテキスト、レイヤー毎のobject数とフレーム範囲、レイヤー色、マーカー、BPMを1回の呼び出しで取得できます。object個別の内容が必要になったら`inspect_timeline`や`inspect_objects`を使います。
+
 ## 取得・検索
 
+- `inspect_scene`: シーン全体の概要。`include_empty`で空レイヤーも含め、`layer_start` / `layer_end` / `max_objects`で範囲を制限
 - `ping` / `get_context` / `get_selection`: 接続状態、現在のシーン、選択を取得
 - `inspect_timeline` / `inspect_object` / `inspect_objects`: タイムラインとobjectを取得
   - objectとエフェクトの`native_id`はSDK側の64bit IDを10進文字列で返します。編集には引き続きブリッジ側の`id`（`object_id`）を使います。
   - objectにはグループ・カメラ制御対象とクリッピングの`flags`を含みます。
+  - `layers`にはレイヤー名・表示・ロックに加えて背景色`color`（`RRGGBBAA`）を含みます。既定色またはAviUtl2 2.1.13未満では省略されます。
 - `inspect_object_values` / `inspect_section_values`: エフェクト値、トラック、区間ごとの値を取得
 - `list_effects` / `list_effect_items`: 利用可能なエフェクトと項目を取得
 - `find_objects`: 名前、エフェクト、素材種別・解像度・長さ、配置、選択で検索
@@ -33,6 +37,7 @@
 - `insert_time`: 指定位置へ空き時間を挿入
 - `trim_objects` / `fit_objects` / `fit_objects_to_media`: 長さを調整
 - `move_to_layers` / `name_layers`: レイヤーへ分類し命名
+- `set_layer_colors`: レイヤーの背景色を一括設定。`layer_start`と`layer_end`の範囲へ`color`を適用するか、`colors`で1レイヤー1色を指定。`RRGGBB` / `RRGGBBAA` / `#RRGGBB`を受け付け、空文字・`default`で既定色へ戻します。`dry_run`に対応
 - `snap_objects_to_bpm`: BPMグリッドへ吸着
 
 ## 区間・マーカー・設定
@@ -52,7 +57,7 @@
 - `capture_preview_snapshot` / `render_snapshot_comparison`: 編集前後を比較
 - `render_change_comparison`: 2フレームを比較
 - `preflight_media`: 素材を追加せず対応可否と情報を検査
-- `diagnose_connection` / `get_server_log` / `reconnect_bridge`: 接続・SDK・直近通信を診断
+- `diagnose_connection` / `get_server_log` / `reconnect_bridge`: 接続・SDK・直近通信を診断。`diagnose_connection`は本体バージョンと`capabilities`（レイヤー背景色・高DPI比率の対応状況）も返します。
 
 ## シーン・プロジェクト・出力
 
@@ -90,6 +95,18 @@ AviUtl2 **2.1.10以上** が必要です。
 ```
 
 `flags`には`enable_group` / `enable_camera` / `clipping_object` / `clipping_upper_object`を指定できます。`execute_batch`でも`op: "set_object_flags"`、`object_id`（または作成結果の`result_ref`）、`flags`で利用できます。
+
+## 本体バージョンによる機能差
+
+プラグインはAviUtl2 2.1.10以降で読み込まれます。それ以降に追加されたSDK関数は、本体のバージョンを確認してから呼び出します。`diagnose_connection`の`bridge.capabilities`で現在の対応状況を確認できます。
+
+| 機能 | 必要バージョン | 未対応時の動作 |
+| --- | --- | --- |
+| シーン一覧・切替・作成、プロジェクト、出力 | 2.1.10 | プラグインが読み込まれません |
+| レイヤー背景色（`set_layer_colors`、`layers[].color`） | 2.1.13 | 色は省略され、設定は`UNSUPPORTED_VERSION` |
+| `context.high_dpi_ratio` | 2.1.14 | 省略 |
+
+AviUtl2を更新すると追加機能がそのまま有効になります。プラグインの再インストールは不要です。
 
 ## 一括操作と安全性
 

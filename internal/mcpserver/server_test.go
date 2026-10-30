@@ -3,8 +3,10 @@ package mcpserver
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/png"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,5 +169,97 @@ func TestBaseEffectName(t *testing.T) {
 	}
 	if got := baseEffectName("カスタム:名前"); got != "カスタム:名前" {
 		t.Fatalf("non-index suffix was removed: %q", got)
+	}
+}
+
+func TestNormalizeLayerColor(t *testing.T) {
+	tests := map[string]string{
+		"#1A2B3C":  "1a2b3c",
+		"1a2b3c":   "1a2b3c",
+		"11223344": "11223344",
+		"":         "",
+		"default":  "",
+		"clear":    "",
+		" none ":   "",
+	}
+	for input, want := range tests {
+		got, err := normalizeLayerColor(input)
+		if err != nil {
+			t.Fatalf("normalizeLayerColor(%q): %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("normalizeLayerColor(%q) = %q, want %q", input, got, want)
+		}
+	}
+	for _, invalid := range []string{"red", "12345", "1234567", "gggggg"} {
+		if _, err := normalizeLayerColor(invalid); err == nil {
+			t.Fatalf("normalizeLayerColor(%q) accepted an invalid color", invalid)
+		}
+	}
+}
+
+func TestValidateBatchOperationsAcceptsLayerColor(t *testing.T) {
+	layer, color, clear := 3, "ff8800", ""
+	if err := validateBatchOperations([]protocol.BatchOperation{{Op: "set_layer_state", Layer: &layer, LayerColor: &color}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBatchOperations([]protocol.BatchOperation{{Op: "set_layer_state", Layer: &layer, LayerColor: &clear}}); err != nil {
+		t.Fatalf("clearing a layer color was rejected: %v", err)
+	}
+	if err := validateBatchOperations([]protocol.BatchOperation{{Op: "set_layer_state", Layer: &layer}}); err == nil {
+		t.Fatal("validateBatchOperations accepted a layer update with no state")
+	}
+	invalid := "nope"
+	if err := validateBatchOperations([]protocol.BatchOperation{{Op: "set_layer_state", Layer: &layer, LayerColor: &invalid}}); err == nil {
+		t.Fatal("validateBatchOperations accepted an invalid layer color")
+	}
+}
+
+func TestLayerColorWireFormat(t *testing.T) {
+	layer, clear, color := 2, "", "ff8800"
+	encoded, err := json.Marshal(protocol.BatchOperation{Op: "set_layer_state", Layer: &layer, LayerColor: &clear})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"layer_color":""`) {
+		t.Fatalf("clearing a layer color must keep an empty layer_color: %s", encoded)
+	}
+	encoded, err = json.Marshal(protocol.BatchOperation{Op: "set_layer_state", Layer: &layer, LayerColor: &color})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"layer_color":"ff8800"`) {
+		t.Fatalf("unexpected layer color payload: %s", encoded)
+	}
+	encoded, err = json.Marshal(protocol.BatchOperation{Op: "set_layer_state", Layer: &layer, Name: &color})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "layer_color") {
+		t.Fatalf("layer_color must stay absent when unset: %s", encoded)
+	}
+}
+
+func TestLimitationsReportsOutdatedHost(t *testing.T) {
+	values := limitations(protocol.DiagnosticsResult{
+		HostVersionText: "2.1.11a",
+		Capabilities: protocol.Capabilities{
+			LayerColor: protocol.Capability{Supported: false, RequiresVersionText: "2.1.13"},
+		},
+	})
+	found := false
+	for _, value := range values {
+		if strings.Contains(value, "2.1.13") && strings.Contains(value, "2.1.11a") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("limitations did not report the outdated host: %v", values)
+	}
+	supported := limitations(protocol.DiagnosticsResult{
+		Capabilities: protocol.Capabilities{LayerColor: protocol.Capability{Supported: true}},
+	})
+	if len(supported) != 4 {
+		t.Fatalf("supported host should not report extra limitations: %v", supported)
 	}
 }
