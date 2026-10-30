@@ -29,7 +29,7 @@ AviUtl2 2.1.10以降が必要です。
 
 ```powershell
 go test ./...
-.\scripts\package.ps1 -Version 0.3.0-test `
+.\scripts\package.ps1 -Version 0.0.4 `
   -AviUtl2SdkDir C:\path\to\aviutl2_sdk\include\aviutl2_sdk
 ```
 
