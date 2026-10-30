@@ -34,6 +34,4 @@ go test ./...
 ```
 
 - [MCPツール](docs/TOOLS.md)
-- [旧ツールからの移行](docs/MIGRATION.md)
-- [開発・ビルド](docs/DEVELOPMENT.md)
 - [内部プロトコル](docs/PROTOCOL.md)

@@ -19,4 +19,4 @@ cmake --build build/plugin --config Release
 
 出力は`aviutl2-mcp-bridge.aux2`です。
 
-新しいSDK関数は`EDIT_SECTION`と`EDIT_HANDLE`の末尾に追記されます。古い本体では関数ポインタ自体が存在しないため、`InitializePlugin`で受け取った本体バージョンで判定してから呼び出します。詳細は[開発ドキュメント](../docs/DEVELOPMENT.md)を参照してください。
+新しいSDK関数は`EDIT_SECTION`と`EDIT_HANDLE`の末尾に追記されます。古い本体では関数ポインタ自体が存在しないため、`InitializePlugin`で受け取った本体バージョンで判定してから呼び出します。

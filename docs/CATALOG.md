@@ -22,6 +22,4 @@ AviUtl2 2.1.10以降が必要です。2.1.13以降ではレイヤーの背景色
 ---
 
 - [MCPツール](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/TOOLS.md)
-- [旧ツールからの移行](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/MIGRATION.md)
-- [開発・ビルド](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/DEVELOPMENT.md)
 - [内部プロトコル](https://github.com/yh2237/AviUtl2-MCP/blob/main/docs/PROTOCOL.md)
