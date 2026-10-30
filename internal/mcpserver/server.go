@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -22,9 +23,9 @@ var colorPattern = regexp.MustCompile(`^[0-9a-fA-F]{6}$`)
 type emptyInput struct{}
 
 type mutationContext struct {
-	SessionID  string `json:"session_id" jsonschema:"session_id returned by get_context"`
-	Generation uint64 `json:"generation" jsonschema:"generation returned by get_context"`
-	SceneID    int    `json:"scene_id" jsonschema:"scene_id returned by get_context"`
+	SessionID  string `json:"session_id,omitempty" jsonschema:"session_id from get_context; required for mutations"`
+	Generation uint64 `json:"generation,omitempty" jsonschema:"generation from get_context; required for mutations"`
+	SceneID    int    `json:"scene_id,omitempty" jsonschema:"scene_id from get_context; required for mutations"`
 }
 
 func (c mutationContext) expected() *protocol.ExpectedContext {
@@ -64,9 +65,10 @@ type timelineOutput struct {
 }
 
 type inspectObjectInput struct {
-	ObjectID       uint64 `json:"object_id" jsonschema:"session-local object id from inspect_timeline or get_selection"`
-	IncludeAlias   bool   `json:"include_alias,omitempty"`
-	IncludeEffects bool   `json:"include_effects,omitempty"`
+	ObjectID       uint64   `json:"object_id,omitempty" jsonschema:"single session-local object id"`
+	ObjectIDs      []uint64 `json:"object_ids,omitempty" jsonschema:"one to one hundred session-local object ids"`
+	IncludeAlias   bool     `json:"include_alias,omitempty"`
+	IncludeEffects bool     `json:"include_effects,omitempty"`
 }
 
 type objectOutput struct {
@@ -92,14 +94,23 @@ type inspectObjectValuesInput struct {
 	IncludeRawValues     *bool    `json:"include_raw_values,omitempty" jsonschema:"defaults to true"`
 	IncludeTrackInfo     *bool    `json:"include_track_info,omitempty" jsonschema:"defaults to true"`
 	IncludeSampledValues *bool    `json:"include_sampled_values,omitempty" jsonschema:"defaults to true"`
+	SampleSections       bool     `json:"sample_sections,omitempty" jsonschema:"sample every section start instead of one frame"`
 }
 
 type objectValuesOutput struct {
-	Values protocol.ObjectValuesResult `json:"values"`
+	Values   *protocol.ObjectValuesResult  `json:"values,omitempty"`
+	Object   *protocol.Object              `json:"object,omitempty"`
+	Sections []protocol.ObjectValuesResult `json:"sections,omitempty"`
+}
+
+type listEffectsInput struct {
+	Effect    string `json:"effect,omitempty" jsonschema:"exact effect name; omit to list every effect"`
+	ItemsOnly bool   `json:"items_only,omitempty"`
 }
 
 type effectsOutput struct {
-	Effects []protocol.EffectDefinition `json:"effects"`
+	Effects []protocol.EffectDefinition `json:"effects,omitempty"`
+	Effect  *protocol.EffectItemsResult `json:"effect,omitempty"`
 }
 
 type effectItemsInput struct {
@@ -135,10 +146,14 @@ type addTextInput struct {
 
 type addMediaInput struct {
 	mutationContext
-	File   string `json:"file" jsonschema:"absolute local media path"`
-	Layer  int    `json:"layer" jsonschema:"zero-based target layer"`
-	Frame  int    `json:"frame" jsonschema:"zero-based start frame"`
-	Length int    `json:"length,omitempty" jsonschema:"duration in frames; zero lets AviUtl2 choose"`
+	File          string   `json:"file,omitempty" jsonschema:"absolute local media path for a single file"`
+	Files         []string `json:"files,omitempty" jsonschema:"several files placed sequentially; each is preflight-checked"`
+	Layer         int      `json:"layer" jsonschema:"zero-based target layer"`
+	Frame         int      `json:"frame" jsonschema:"zero-based start frame"`
+	Length        int      `json:"length,omitempty" jsonschema:"duration in frames; zero lets AviUtl2 choose"`
+	Gap           int      `json:"gap,omitempty" jsonschema:"frames between files"`
+	LayerStep     int      `json:"layer_step,omitempty" jsonschema:"layer offset applied per file"`
+	DefaultLength int      `json:"default_length,omitempty" jsonschema:"duration used when the media reports no length"`
 }
 
 type updateObjectInput struct {
@@ -158,17 +173,22 @@ type deleteObjectInput struct {
 type duplicateObjectsInput struct {
 	mutationContext
 	targetSpec
-	FrameOffset int `json:"frame_offset" jsonschema:"frame offset applied for each repetition"`
-	LayerOffset int `json:"layer_offset,omitempty" jsonschema:"layer offset applied for each repetition"`
+	FrameOffset int `json:"frame_offset,omitempty" jsonschema:"frames between repetitions"`
+	LayerOffset int `json:"layer_offset,omitempty" jsonschema:"layers between repetitions"`
 	Repeat      int `json:"repeat,omitempty" jsonschema:"number of copies, default 1 and maximum 20"`
+	Rows        int `json:"rows,omitempty" jsonschema:"grid rows; use instead of repeat"`
+	Columns     int `json:"columns,omitempty" jsonschema:"grid columns; use instead of repeat"`
+	FrameStep   int `json:"frame_step,omitempty" jsonschema:"grid: frames between columns"`
+	LayerStep   int `json:"layer_step,omitempty" jsonschema:"grid: layers between rows"`
 }
 
 type effectMutationInput struct {
 	mutationContext
+	Operation   string `json:"operation" jsonschema:"add, delete, or set_state"`
 	ObjectID    uint64 `json:"object_id"`
-	Effect      string `json:"effect,omitempty" jsonschema:"effect name for add_effect"`
-	EffectIndex int    `json:"effect_index,omitempty" jsonschema:"zero-based effect index for delete or state changes"`
-	Index       *int   `json:"index,omitempty" jsonschema:"new effect order for set_effect_state"`
+	Effect      string `json:"effect,omitempty" jsonschema:"effect name for operation=add"`
+	EffectIndex int    `json:"effect_index,omitempty" jsonschema:"zero-based effect index for delete and set_state"`
+	Index       *int   `json:"index,omitempty" jsonschema:"new effect order for operation=set_state"`
 	Enabled     *bool  `json:"enabled,omitempty"`
 	Locked      *bool  `json:"locked,omitempty"`
 }
@@ -186,12 +206,12 @@ type mutationOutput struct {
 }
 
 type batchOutput struct {
-	DryRun     bool                      `json:"dry_run"`
-	Valid      bool                      `json:"valid"`
-	Operations []protocol.BatchOperation `json:"operations"`
-	Mutation   *protocol.MutationResult  `json:"mutation,omitempty"`
-	Objects    []protocol.Object         `json:"objects,omitempty"`
-	ElapsedMS  int64                     `json:"elapsed_ms"`
+	DryRun     bool                     `json:"dry_run"`
+	Valid      bool                     `json:"valid"`
+	Operations []any                    `json:"operations"`
+	Mutation   *protocol.MutationResult `json:"mutation,omitempty"`
+	Objects    []protocol.Object        `json:"objects,omitempty"`
+	ElapsedMS  int64                    `json:"elapsed_ms"`
 }
 
 type previewInput struct {
@@ -259,49 +279,77 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, timelineOutput{Timeline: result}, err
 		})
 
-	addTool(server, &mcp.Tool{Name: "inspect_object", Description: "Inspect one object, including placement, sections, alias data, and effect states."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectInput) (*mcp.CallToolResult, objectOutput, error) {
-			result, err := client.InspectObject(ctx, protocol.InspectObjectParams(input))
-			return nil, objectOutput{Object: result}, err
-		})
-
-	addTool(server, &mcp.Tool{Name: "inspect_objects", Description: "Inspect up to one hundred objects in one bridge read section."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectsInput) (*mcp.CallToolResult, objectsOutput, error) {
-			if len(input.ObjectIDs) < 1 || len(input.ObjectIDs) > protocol.MaxBatchOperations {
-				return nil, objectsOutput{}, errors.New("object_ids must contain between 1 and 100 entries")
+	addTool(server, &mcp.Tool{Name: "inspect_object", Description: "Inspect one object or up to one hundred objects, including placement, sections, alias data, and effect states."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectInput) (*mcp.CallToolResult, objectsOutput, error) {
+			ids := input.ObjectIDs
+			if input.ObjectID != 0 {
+				ids = append([]uint64{input.ObjectID}, ids...)
 			}
-			result, err := client.InspectObjects(ctx, protocol.InspectObjectsParams(input))
+			if len(ids) == 0 || len(ids) > protocol.MaxBatchOperations {
+				return nil, objectsOutput{}, errors.New("object_id or object_ids (up to 100) is required")
+			}
+			if len(ids) == 1 {
+				result, err := client.InspectObject(ctx, protocol.InspectObjectParams{ObjectID: ids[0], IncludeAlias: input.IncludeAlias, IncludeEffects: input.IncludeEffects})
+				if err != nil {
+					return nil, objectsOutput{}, err
+				}
+				return nil, objectsOutput{Objects: protocol.ObjectsResult{Context: result.Context, Objects: []protocol.Object{result.Object}}}, nil
+			}
+			result, err := client.InspectObjects(ctx, protocol.InspectObjectsParams{ObjectIDs: ids, IncludeAlias: input.IncludeAlias, IncludeEffects: input.IncludeEffects})
 			return nil, objectsOutput{Objects: result}, err
 		})
 
-	addTool(server, &mcp.Tool{Name: "inspect_object_values", Description: "Inspect every effect item on an object, including raw values, track metadata, and values sampled at a frame."},
+	addTool(server, &mcp.Tool{Name: "inspect_object_values", Description: "Inspect effect items on an object, including raw values, track metadata, and values sampled at a frame. sample_sections samples every section start instead."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectObjectValuesInput) (*mcp.CallToolResult, objectValuesOutput, error) {
 			if input.ObjectID == 0 || (input.Frame != nil && *input.Frame < 0) {
 				return nil, objectValuesOutput{}, errors.New("object_id is required and frame must be non-negative")
 			}
-			result, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams(input))
-			return nil, objectValuesOutput{Values: result}, err
-		})
-
-	addTool(server, &mcp.Tool{Name: "list_effects", Description: "List effect definitions registered in AviUtl2."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, effectsOutput, error) {
-			result, err := client.ListEffects(ctx)
-			return nil, effectsOutput{Effects: result}, err
-		})
-
-	addTool(server, &mcp.Tool{Name: "list_effect_items", Description: "List configurable item names and types for an effect."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input effectItemsInput) (*mcp.CallToolResult, effectItemsOutput, error) {
-			if strings.TrimSpace(input.Effect) == "" {
-				return nil, effectItemsOutput{}, errors.New("effect is required")
+			if input.SampleSections {
+				result, err := client.InspectObject(ctx, protocol.InspectObjectParams{ObjectID: input.ObjectID, IncludeEffects: true})
+				if err != nil {
+					return nil, objectValuesOutput{}, err
+				}
+				values := []protocol.ObjectValuesResult{}
+				for _, frame := range result.Object.Sections {
+					sample := float64(frame)
+					section, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams{
+						ObjectID: input.ObjectID, Frame: &sample, Effect: input.Effect, Items: input.Items,
+						IncludeRawValues: input.IncludeRawValues, IncludeTrackInfo: input.IncludeTrackInfo, IncludeSampledValues: input.IncludeSampledValues,
+					})
+					if err != nil {
+						return nil, objectValuesOutput{}, err
+					}
+					values = append(values, section)
+				}
+				return nil, objectValuesOutput{Object: &result.Object, Sections: values}, nil
 			}
-			result, err := client.ListEffectItems(ctx, input.Effect)
-			return nil, effectItemsOutput{Effect: result}, err
+			result, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams{
+				ObjectID: input.ObjectID, Frame: input.Frame, EffectIndex: input.EffectIndex, Effect: input.Effect, Items: input.Items,
+				IncludeRawValues: input.IncludeRawValues, IncludeTrackInfo: input.IncludeTrackInfo, IncludeSampledValues: input.IncludeSampledValues,
+			})
+			return nil, objectValuesOutput{Values: &result}, err
 		})
 
 	addTool(server, &mcp.Tool{Name: "get_selection", Description: "Get the focus object and all currently selected timeline objects."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, selectionOutput, error) {
 			result, err := client.GetSelection(ctx)
 			return nil, selectionOutput{Selection: result}, err
+		})
+
+	addTool(server, &mcp.Tool{Name: "list_effects", Description: "List registered effects, or the configurable items of one effect when effect is given."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input listEffectsInput) (*mcp.CallToolResult, effectsOutput, error) {
+			if input.Effect == "" {
+				if input.ItemsOnly {
+					return nil, effectsOutput{}, errors.New("effect is required when items_only is set")
+				}
+				result, err := client.ListEffects(ctx)
+				return nil, effectsOutput{Effects: result}, err
+			}
+			result, err := client.ListEffectItems(ctx, input.Effect)
+			if err != nil {
+				return nil, effectsOutput{}, err
+			}
+			return nil, effectsOutput{Effect: &result}, nil
 		})
 
 	addTool(server, &mcp.Tool{Name: "preflight_media", Description: "Check whether AviUtl2 supports a media file and return its metadata without adding it."},
@@ -335,15 +383,50 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	addTool(server, &mcp.Tool{Name: "add_media", Description: "Add a local media file to the timeline using optimistic context checks."},
+	addTool(server, &mcp.Tool{Name: "add_media", Description: "Add one media file, or place several files sequentially with files. Each file is preflight-checked first."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input addMediaInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
 			}
-			if input.File == "" || input.Layer < 0 || input.Frame < 0 || input.Length < 0 {
-				return nil, mutationOutput{}, errors.New("file is required and layer/frame/length must be non-negative")
+			if input.Layer < 0 || input.Frame < 0 || input.Length < 0 {
+				return nil, mutationOutput{}, errors.New("layer, frame, and length must be non-negative")
 			}
-			result, err := client.AddMedia(ctx, protocol.AddMediaParams{File: input.File, Layer: input.Layer, Frame: input.Frame, Length: input.Length}, input.expected())
+			if len(input.Files) == 0 {
+				if input.File == "" {
+					return nil, mutationOutput{}, errors.New("file or files is required")
+				}
+				result, err := client.AddMedia(ctx, protocol.AddMediaParams{File: input.File, Layer: input.Layer, Frame: input.Frame, Length: input.Length}, input.expected())
+				return nil, mutationOutput{Mutation: result}, err
+			}
+			if len(input.Files) > 100 {
+				return nil, mutationOutput{}, errors.New("files must contain at most 100 entries")
+			}
+			current, err := client.GetContext(ctx)
+			if err != nil {
+				return nil, mutationOutput{}, err
+			}
+			if current.SessionID != input.SessionID || current.Generation != input.Generation || current.SceneID != input.SceneID {
+				return nil, mutationOutput{}, errors.New("AviUtl2 context changed while preparing the media sequence")
+			}
+			cursor := input.Frame
+			operations := []protocol.BatchOperation{}
+			for index, file := range input.Files {
+				info, err := client.PreflightMedia(ctx, protocol.PreflightMediaParams{File: file, Strict: true})
+				if err != nil {
+					return nil, mutationOutput{}, err
+				}
+				if !info.Supported {
+					return nil, mutationOutput{}, fmt.Errorf("unsupported media: %s", file)
+				}
+				length := input.DefaultLength
+				if info.TotalTime > 0 {
+					length = max(1, int(math.Round(info.TotalTime*float64(current.Rate)/float64(current.Scale))))
+				}
+				layer, frame := input.Layer+index*input.LayerStep, cursor
+				operations = append(operations, protocol.BatchOperation{Op: "add_media", File: file, Layer: &layer, Frame: &frame, Length: length})
+				cursor += max(1, length) + input.Gap
+			}
+			result, err := client.ExecuteBatch(ctx, protocol.ExecuteBatchParams{Operations: operations}, input.expected())
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
@@ -363,59 +446,102 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return nil, mutationOutput{Mutation: result}, err
 		})
 
-	addTool(server, &mcp.Tool{Name: "delete_object", Description: "Delete an object in the expected AviUtl2 scene and generation."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input deleteObjectInput) (*mcp.CallToolResult, mutationOutput, error) {
+	addTool(server, &mcp.Tool{Name: "duplicate_objects", Description: "Duplicate objects with all effects and animation as an offset repetition or a frame/layer grid, in one Undo unit."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input duplicateObjectsInput) (*mcp.CallToolResult, mutationOutput, error) {
+			if err := input.mutationContext.validate(); err != nil {
+				return nil, mutationOutput{}, err
+			}
+			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
+			if err != nil {
+				return nil, mutationOutput{}, err
+			}
+			operations := []protocol.BatchOperation{}
+			if input.Rows > 0 || input.Columns > 0 {
+				if input.Rows < 1 || input.Columns < 1 || input.Rows*input.Columns <= 1 {
+					return nil, mutationOutput{}, errors.New("rows and columns must be positive and create at least two cells")
+				}
+				for row := 0; row < input.Rows; row++ {
+					for column := 0; column < input.Columns; column++ {
+						if row == 0 && column == 0 {
+							continue
+						}
+						for _, object := range objects {
+							layer, frame := object.Layer+row*input.LayerStep, object.Start+column*input.FrameStep
+							if layer < 0 || frame < 0 {
+								return nil, mutationOutput{}, errors.New("pattern target is negative")
+							}
+							operations = append(operations, protocol.BatchOperation{Op: "duplicate_object", ObjectID: object.ID, Layer: &layer, Frame: &frame, Length: object.End - object.Start + 1})
+						}
+					}
+				}
+			} else {
+				if input.Repeat == 0 {
+					input.Repeat = 1
+				}
+				if input.Repeat < 1 || input.Repeat > 20 || len(objects)*input.Repeat > protocol.MaxBatchOperations {
+					return nil, mutationOutput{}, errors.New("repeat must be between 1 and 20 and total copies must not exceed 100")
+				}
+				for repetition := 1; repetition <= input.Repeat; repetition++ {
+					for _, object := range objects {
+						layer := object.Layer + input.LayerOffset*repetition
+						frame := object.Start + input.FrameOffset*repetition
+						if layer < 0 || frame < 0 {
+							return nil, mutationOutput{}, errors.New("duplicate target layer and frame must be non-negative")
+						}
+						operations = append(operations, protocol.BatchOperation{
+							Op: "duplicate_object", ObjectID: object.ID, Layer: &layer, Frame: &frame,
+							Length: object.End - object.Start + 1,
+						})
+					}
+				}
+			}
+			if len(operations) > protocol.MaxBatchOperations {
+				return nil, mutationOutput{}, fmt.Errorf("planned copies exceed %d operations", protocol.MaxBatchOperations)
+			}
+			result, err := client.ExecuteBatch(ctx, protocol.ExecuteBatchParams{Operations: operations}, input.expected())
+			return nil, mutationOutput{Mutation: result}, err
+		})
+
+	addTool(server, &mcp.Tool{Name: "edit_effect", Description: "Add, delete, or change the state of an effect on an object."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input effectMutationInput) (*mcp.CallToolResult, mutationOutput, error) {
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, mutationOutput{}, err
 			}
 			if input.ObjectID == 0 {
 				return nil, mutationOutput{}, errors.New("object_id is required")
 			}
-			result, err := client.DeleteObject(ctx, input.ObjectID, input.expected())
-			return nil, mutationOutput{Mutation: result}, err
-		})
-
-	addTool(server, &mcp.Tool{Name: "duplicate_objects", Description: "Duplicate objects with all effects and animation. Repetitions are created in one Undo unit."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input duplicateObjectsInput) (*mcp.CallToolResult, mutationOutput, error) {
-			if err := input.mutationContext.validate(); err != nil {
-				return nil, mutationOutput{}, err
-			}
-			if input.Repeat == 0 {
-				input.Repeat = 1
-			}
-			objects, err := resolveTargetObjects(ctx, client, input.mutationContext, input.targetSpec, 1)
-			if err != nil {
-				return nil, mutationOutput{}, err
-			}
-			if input.Repeat < 1 || input.Repeat > 20 || len(objects)*input.Repeat > protocol.MaxBatchOperations {
-				return nil, mutationOutput{}, errors.New("repeat must be between 1 and 20 and total copies must not exceed 100")
-			}
-			operations := make([]protocol.BatchOperation, 0, len(objects)*input.Repeat)
-			for repetition := 1; repetition <= input.Repeat; repetition++ {
-				for _, object := range objects {
-					layer := object.Layer + input.LayerOffset*repetition
-					frame := object.Start + input.FrameOffset*repetition
-					if layer < 0 || frame < 0 {
-						return nil, mutationOutput{}, errors.New("duplicate target layer and frame must be non-negative")
-					}
-					operations = append(operations, protocol.BatchOperation{
-						Op: "duplicate_object", ObjectID: object.ID, Layer: &layer, Frame: &frame,
-						Length: object.End - object.Start + 1,
-					})
+			method := ""
+			switch input.Operation {
+			case "add":
+				if input.Effect == "" {
+					return nil, mutationOutput{}, errors.New("effect is required for operation=add")
 				}
+				method = "add_effect"
+			case "delete":
+				if input.EffectIndex < 0 {
+					return nil, mutationOutput{}, errors.New("effect_index must be non-negative")
+				}
+				method = "delete_effect"
+			case "set_state":
+				if input.EffectIndex < 0 {
+					return nil, mutationOutput{}, errors.New("effect_index must be non-negative")
+				}
+				if input.Index == nil && input.Enabled == nil && input.Locked == nil {
+					return nil, mutationOutput{}, errors.New("operation=set_state requires index, enabled, or locked")
+				}
+				method = "set_effect_state"
+			default:
+				return nil, mutationOutput{}, fmt.Errorf("unknown operation %q; use add, delete, or set_state", input.Operation)
 			}
-			result, err := client.ExecuteBatch(ctx, protocol.ExecuteBatchParams{Operations: operations}, input.expected())
+			params := protocol.EffectMutationParams{ObjectID: input.ObjectID, Effect: input.Effect, EffectIndex: input.EffectIndex, Index: input.Index, Enabled: input.Enabled, Locked: input.Locked}
+			result, err := client.MutateEffect(ctx, method, params, input.expected())
 			return nil, mutationOutput{Mutation: result}, err
 		})
-
-	addEffectTool(server, client, "add_effect", "Add or replace an effect on an object.")
-	addEffectTool(server, client, "delete_effect", "Delete an effect by zero-based index.")
-	addEffectTool(server, client, "set_effect_state", "Enable, lock, or reorder an effect by zero-based index.")
 
 	addTool(server, &mcp.Tool{Name: "execute_batch", Description: "Preflight and execute up to 100 operations in one AviUtl2 edit section and Undo unit. Supports dry-run, timeout, progress, and result inspection."},
 		func(ctx context.Context, request *mcp.CallToolRequest, input batchInput) (*mcp.CallToolResult, batchOutput, error) {
 			started := time.Now()
-			output := batchOutput{DryRun: input.DryRun, Operations: input.Operations}
+			output := batchOutput{DryRun: input.DryRun, Operations: toAnyOperations(input.Operations)}
 			if err := input.mutationContext.validate(); err != nil {
 				return nil, output, err
 			}
@@ -479,7 +605,6 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return content, output, nil
 		})
 
-	addTimelineTools(server, client)
 	addContactSheetTool(server, client)
 	addQueryTools(server, client)
 	addDiagnosticsTools(server, client, version)
@@ -491,31 +616,6 @@ func New(client *bridge.Client, version string) *mcp.Server {
 
 	return server
 }
-
-func addEffectTool(server *mcp.Server, client *bridge.Client, name, description string) {
-	addTool(server, &mcp.Tool{Name: name, Description: description},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input effectMutationInput) (*mcp.CallToolResult, mutationOutput, error) {
-			if err := input.mutationContext.validate(); err != nil {
-				return nil, mutationOutput{}, err
-			}
-			if input.ObjectID == 0 {
-				return nil, mutationOutput{}, errors.New("object_id is required")
-			}
-			if name == "add_effect" && input.Effect == "" {
-				return nil, mutationOutput{}, errors.New("effect is required")
-			}
-			if name != "add_effect" && input.EffectIndex < 0 {
-				return nil, mutationOutput{}, errors.New("effect_index must be non-negative")
-			}
-			if name == "set_effect_state" && input.Index == nil && input.Enabled == nil && input.Locked == nil {
-				return nil, mutationOutput{}, errors.New("set_effect_state requires index, enabled, or locked")
-			}
-			params := protocol.EffectMutationParams{ObjectID: input.ObjectID, Effect: input.Effect, EffectIndex: input.EffectIndex, Index: input.Index, Enabled: input.Enabled, Locked: input.Locked}
-			result, err := client.MutateEffect(ctx, name, params, input.expected())
-			return nil, mutationOutput{Mutation: result}, err
-		})
-}
-
 func validateBatchOperations(operations []protocol.BatchOperation) error {
 	for index, operation := range operations {
 		prefix := fmt.Sprintf("operations[%d]", index)

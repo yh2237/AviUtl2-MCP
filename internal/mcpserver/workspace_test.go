@@ -88,27 +88,28 @@ func TestWorkspaceToolsForwardTokensAndDistinctTargetScene(t *testing.T) {
 	})
 	path := filepath.Join(t.TempDir(), "project.aup2")
 	for _, test := range []struct {
-		name     string
+		tool     string
+		method   string
 		params   map[string]any
 		mutation bool
 	}{
-		{"list_scenes", map[string]any{}, false},
-		{"select_scene", map[string]any{"target_scene_id": 7}, true},
-		{"create_scene", map[string]any{"name": "Title", "width": 1280, "background": "00000000"}, true},
-		{"create_project", map[string]any{"show_confirm": true}, true},
-		{"open_project", map[string]any{"file": path}, true},
-		{"save_project", map[string]any{"file": path}, true},
-		{"list_output_plugins", map[string]any{}, false},
-		{"output_file", map[string]any{"file": filepath.Join(t.TempDir(), "movie.mp4"), "output_plugin": "Encoder", "save_project_file": path}, true},
-		{"get_output_status", map[string]any{"job_id": 1}, false},
+		{"scenes", "list_scenes", map[string]any{"operation": "list"}, false},
+		{"scenes", "select_scene", map[string]any{"operation": "select", "target_scene_id": 7}, true},
+		{"scenes", "create_scene", map[string]any{"operation": "create", "name": "Title", "width": 1280, "background": "00000000"}, true},
+		{"project", "create_project", map[string]any{"operation": "create", "show_confirm": true}, true},
+		{"project", "open_project", map[string]any{"operation": "open", "file": path}, true},
+		{"project", "save_project", map[string]any{"operation": "save", "file": path}, true},
+		{"output", "list_output_plugins", map[string]any{"operation": "list_plugins"}, false},
+		{"output", "output_file", map[string]any{"operation": "start", "file": filepath.Join(t.TempDir(), "movie.mp4"), "output_plugin": "Encoder", "save_project_file": path}, true},
+		{"output", "get_output_status", map[string]any{"operation": "status", "job_id": 1}, false},
 	} {
-		t.Run(test.name, func(t *testing.T) {
+		t.Run(test.method, func(t *testing.T) {
 			if test.mutation {
 				test.params["session_id"] = "session"
 				test.params["generation"] = 8
 				test.params["scene_id"] = 2
 			}
-			result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: test.name, Arguments: test.params})
+			result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: test.tool, Arguments: test.params})
 			if err != nil || result.IsError {
 				var content []mcp.Content
 				if result != nil {
@@ -118,19 +119,19 @@ func TestWorkspaceToolsForwardTokensAndDistinctTargetScene(t *testing.T) {
 				t.Fatalf("tool failed: %s, %v", encoded, err)
 			}
 			req := <-requests
-			if req.Method != test.name {
+			if req.Method != test.method {
 				t.Fatalf("got method %q", req.Method)
 			}
 			if test.mutation && (req.Context == nil || req.Context.SessionID != "session" || req.Context.Generation == nil || *req.Context.Generation != 8 || req.Context.SceneID == nil || *req.Context.SceneID != 2) {
 				t.Fatalf("incorrect concurrency tokens: %+v", req.Context)
 			}
-			if test.name == "select_scene" {
+			if test.method == "select_scene" {
 				var params protocol.SelectSceneParams
 				if err := json.Unmarshal(req.Params, &params); err != nil || params.TargetSceneID == nil || *params.TargetSceneID != 7 {
 					t.Fatalf("target scene was lost: %s", req.Params)
 				}
 			}
-			if test.name == "create_scene" {
+			if test.method == "create_scene" {
 				var params protocol.CreateSceneParams
 				if err := json.Unmarshal(req.Params, &params); err != nil || params.Width == nil || *params.Width != 1280 || params.Background != "00000000" || params.Height != nil {
 					t.Fatalf("scene overrides were lost: %s", req.Params)
@@ -202,11 +203,11 @@ func TestWorkspaceToolsRejectInvalidInputsBeforeBridge(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"select_scene", map[string]any{"target_scene_id": 7, "name": "Both"}},
-		{"create_scene", map[string]any{"name": "Title", "width": 0}},
-		{"create_project", map[string]any{"background": "ffffff"}},
-		{"save_project", map[string]any{"file": "relative.aup2"}},
-		{"output_file", map[string]any{"file": filepath.Join(t.TempDir(), "movie.mp4"), "output_plugin": "Encoder", "timeout_ms": 300001}},
+		{"scenes", map[string]any{"operation": "select", "target_scene_id": 7, "name": "Both"}},
+		{"scenes", map[string]any{"operation": "create", "name": "Title", "width": 0}},
+		{"project", map[string]any{"operation": "create", "background": "ffffff"}},
+		{"project", map[string]any{"operation": "save", "file": "relative.aup2"}},
+		{"output", map[string]any{"operation": "start", "file": filepath.Join(t.TempDir(), "movie.mp4"), "output_plugin": "Encoder", "timeout_ms": 300001}},
 		{"set_object_flags", map[string]any{"object_ids": []int{1}, "flags": map[string]any{}}},
 	} {
 		test.args["session_id"] = "session"

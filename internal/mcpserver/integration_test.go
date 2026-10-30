@@ -96,7 +96,7 @@ func TestToolListIncludesSceneOrientationAndLayerColors(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = tool
 	}
-	for _, want := range []string{"inspect_scene", "set_layer_colors", "inspect_timeline", "execute_batch"} {
+	for _, want := range []string{"inspect_scene", "edit_layers", "inspect_timeline", "execute_batch"} {
 		if names[want] == nil {
 			available := make([]string, 0, len(names))
 			for name := range names {
@@ -106,8 +106,8 @@ func TestToolListIncludesSceneOrientationAndLayerColors(t *testing.T) {
 			t.Fatalf("tool %q is missing; registered tools: %v", want, available)
 		}
 	}
-	if names["set_layer_colors"].InputSchema == nil {
-		t.Fatal("set_layer_colors has no input schema")
+	if names["edit_layers"].InputSchema == nil {
+		t.Fatal("edit_layers has no input schema")
 	}
 }
 
@@ -116,7 +116,7 @@ func TestToolSchemasStayCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) < 80 {
+	if len(tools.Tools) < 30 {
 		t.Fatalf("only %d tools were registered", len(tools.Tools))
 	}
 	total := 0
@@ -238,11 +238,12 @@ func TestSetLayerColorsPlansOneOperationPerLayer(t *testing.T) {
 
 	session := connectTestSession(t, address)
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "set_layer_colors",
+		Name: "edit_layers",
 		Arguments: map[string]any{
 			"session_id":  "s",
 			"generation":  3,
 			"scene_id":    0,
+			"operation":   "color",
 			"layer_start": 2,
 			"layer_end":   4,
 			"colors":      []string{"ff0000", "", "default"},
@@ -250,13 +251,17 @@ func TestSetLayerColorsPlansOneOperationPerLayer(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("set_layer_colors: %v", err)
+		t.Fatalf("edit_layers: %v", err)
 	}
 	encoded, err := json.Marshal(result.StructuredContent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var plan operationPlanOutput
+	var plan struct {
+		DryRun     bool                      `json:"dry_run"`
+		Operations []protocol.BatchOperation `json:"operations"`
+		Mutation   *protocol.MutationResult  `json:"mutation"`
+	}
 	if err := json.Unmarshal(encoded, &plan); err != nil {
 		t.Fatalf("decode plan: %v", err)
 	}

@@ -11,12 +11,11 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-type markersOutput struct {
-	Markers protocol.MarkersResult `json:"markers"`
+type diagnoseInput struct {
+	Reconnect  bool `json:"reconnect,omitempty" jsonschema:"close and reopen the bridge socket before diagnosing"`
+	IncludeLog bool `json:"include_log,omitempty" jsonschema:"include the last fifty bridge calls"`
 }
-type bpmOutput struct {
-	BPM protocol.BPMGridResult `json:"bpm"`
-}
+
 type diagnosticsOutput struct {
 	ServerVersion string                     `json:"server_version"`
 	Bridge        protocol.DiagnosticsResult `json:"bridge"`
@@ -25,30 +24,26 @@ type diagnosticsOutput struct {
 	LatencyMS     int64                      `json:"latency_ms"`
 	Editable      bool                       `json:"editable"`
 	Limitations   []string                   `json:"limitations"`
-}
-type serverLogOutput struct {
-	Calls []bridge.CallLog `json:"calls"`
+	Log           []bridge.CallLog           `json:"log,omitempty"`
 }
 
 func addDiagnosticsTools(server *mcp.Server, client *bridge.Client, version string) {
-	addTool(server, &mcp.Tool{Name: "get_markers", Description: "List all timeline markers and memos in the current scene."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, markersOutput, error) {
-			result, err := client.GetMarkers(ctx)
-			return nil, markersOutput{Markers: result}, err
-		})
-	addTool(server, &mcp.Tool{Name: "get_bpm_grid", Description: "Get the complete BPM grid in the current scene."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, bpmOutput, error) {
-			result, err := client.GetBPMGrid(ctx)
-			return nil, bpmOutput{BPM: result}, err
-		})
-	addTool(server, &mcp.Tool{Name: "diagnose_connection", Description: "Diagnose the MCP server, native bridge, AviUtl2 host, modules, latency, and SDK limitations."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, diagnosticsOutput, error) {
+	addTool(server, &mcp.Tool{Name: "diagnose_connection", Description: "Diagnose the MCP server, native bridge, AviUtl2 host, modules, latency, and SDK limitations. reconnect reopens a stuck socket; include_log adds recent bridge calls."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input diagnoseInput) (*mcp.CallToolResult, diagnosticsOutput, error) {
 			started := time.Now()
+			if input.Reconnect {
+				if _, err := client.Reconnect(ctx); err != nil {
+					return nil, diagnosticsOutput{}, fmt.Errorf("reconnect: %w", err)
+				}
+			}
 			bridgeInfo, err := client.Diagnostics(ctx)
 			if err != nil {
 				return nil, diagnosticsOutput{}, fmt.Errorf("native bridge diagnostics: %w", err)
 			}
 			output := diagnosticsOutput{ServerVersion: version, Bridge: bridgeInfo, Limitations: limitations(bridgeInfo)}
+			if input.IncludeLog {
+				output.Log = client.RecentCalls()
+			}
 			current, err := client.GetContext(ctx)
 			if err != nil {
 				// AviUtl2 returns NO_PROJECT until it finishes opening a project.
@@ -66,15 +61,6 @@ func addDiagnosticsTools(server *mcp.Server, client *bridge.Client, version stri
 			output.LatencyMS = time.Since(started).Milliseconds()
 			output.Editable = current.EditState == 0
 			return nil, output, nil
-		})
-	addTool(server, &mcp.Tool{Name: "get_server_log", Description: "Return the last fifty bridge calls with duration and errors."},
-		func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, serverLogOutput, error) {
-			return nil, serverLogOutput{Calls: client.RecentCalls()}, nil
-		})
-	addTool(server, &mcp.Tool{Name: "reconnect_bridge", Description: "Close the current bridge socket, reconnect, and ping AviUtl2."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, pingOutput, error) {
-			result, err := client.Reconnect(ctx)
-			return nil, pingOutput(result), err
 		})
 }
 
