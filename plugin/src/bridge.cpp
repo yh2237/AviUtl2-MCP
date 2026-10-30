@@ -339,11 +339,19 @@ bool receive_all(SOCKET socket, void* destination, std::size_t size) {
     while (size > 0 && running.load(std::memory_order_acquire)) {
         const int chunk_size = static_cast<int>(std::min<std::size_t>(size, 64 * 1024));
         const int received = recv(socket, output, chunk_size, 0);
-        if (received <= 0) {
+        if (received > 0) {
+            output += received;
+            size -= static_cast<std::size_t>(received);
+            continue;
+        }
+        if (received == 0) {
             return false;
         }
-        output += received;
-        size -= static_cast<std::size_t>(received);
+        const int error = WSAGetLastError();
+        if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+            continue;  // idle between requests; re-check running and keep waiting
+        }
+        return false;
     }
     return size == 0;
 }
@@ -353,11 +361,16 @@ bool send_all(SOCKET socket, const void* source, std::size_t size) {
     while (size > 0 && running.load(std::memory_order_acquire)) {
         const int chunk_size = static_cast<int>(std::min<std::size_t>(size, 64 * 1024));
         const int sent = send(socket, input, chunk_size, 0);
-        if (sent <= 0) {
-            return false;
+        if (sent > 0) {
+            input += sent;
+            size -= static_cast<std::size_t>(sent);
+            continue;
         }
-        input += sent;
-        size -= static_cast<std::size_t>(sent);
+        const int error = WSAGetLastError();
+        if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+            continue;
+        }
+        return false;
     }
     return size == 0;
 }
@@ -1792,10 +1805,26 @@ void server_main() noexcept {
     }
 
     while (running.load(std::memory_order_acquire)) {
-        SOCKET accepted = accept(local_listener, nullptr, nullptr);
-        if (accepted == INVALID_SOCKET) {
+        // A blocking accept() is not reliably woken by closesocket() from another thread,
+        // which used to leave aviutl2.exe alive after the window closed. Poll instead.
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(local_listener, &read_set);
+        timeval timeout{0, 200000};
+        const int ready = select(0, &read_set, nullptr, nullptr, &timeout);
+        if (!running.load(std::memory_order_acquire)) {
             break;
         }
+        if (ready <= 0) {
+            continue;
+        }
+        SOCKET accepted = accept(local_listener, nullptr, nullptr);
+        if (accepted == INVALID_SOCKET) {
+            continue;
+        }
+        DWORD io_timeout = 250;
+        setsockopt(accepted, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&io_timeout), sizeof(io_timeout));
+        setsockopt(accepted, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&io_timeout), sizeof(io_timeout));
         {
             std::lock_guard lock(socket_mutex);
             client_socket = accepted;
@@ -1808,7 +1837,6 @@ void server_main() noexcept {
             }
         }
     }
-
     {
         std::lock_guard lock(socket_mutex);
         if (listen_socket == local_listener) {
@@ -1848,7 +1876,13 @@ extern "C" __declspec(dllexport) void UninitializePlugin() {
     running.store(false, std::memory_order_release);
     close_server_sockets();
     if (server_thread.joinable()) {
-        server_thread.join();
+        // The server thread wakes within 200 ms; keep a hard cap so a stuck socket
+        // can never keep the host process alive.
+        if (WaitForSingleObject(server_thread.native_handle(), 3000) == WAIT_OBJECT_0) {
+            server_thread.join();
+        } else {
+            server_thread.detach();
+        }
     }
     stop_workspace_window();
     invalidate_objects();
