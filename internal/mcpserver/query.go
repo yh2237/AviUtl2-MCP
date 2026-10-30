@@ -113,6 +113,38 @@ type outOfRangeOutput struct {
 	Objects []protocol.Object `json:"objects"`
 }
 
+type analyzeTimelineInput struct {
+	Operation  string `json:"operation" jsonschema:"summary, gaps, or overlaps"`
+	LayerStart *int   `json:"layer_start,omitempty"`
+	LayerEnd   *int   `json:"layer_end,omitempty"`
+	FrameStart *int   `json:"frame_start,omitempty"`
+	FrameEnd   *int   `json:"frame_end,omitempty"`
+}
+
+type analyzeTimelineOutput struct {
+	Operation   string            `json:"operation"`
+	Context     *protocol.Context `json:"context,omitempty"`
+	ObjectCount int               `json:"object_count,omitempty"`
+	Layers      []layerSummary    `json:"layers,omitempty"`
+	Start       int               `json:"start,omitempty"`
+	End         int               `json:"end,omitempty"`
+	Gaps        []timelineGap     `json:"gaps,omitempty"`
+	Overlaps    []timelineOverlap `json:"overlaps,omitempty"`
+}
+
+type auditSceneInput struct {
+	Operation string `json:"operation" jsonschema:"effects, media, missing_media, or outside_scene"`
+}
+
+type auditSceneOutput struct {
+	Operation string              `json:"operation"`
+	Context   *protocol.Context   `json:"context,omitempty"`
+	Effects   map[string]int      `json:"effects,omitempty"`
+	Media     map[string][]uint64 `json:"media,omitempty"`
+	Missing   []missingMedia      `json:"missing,omitempty"`
+	Objects   []protocol.Object   `json:"objects,omitempty"`
+}
+
 func addQueryTools(server *mcp.Server, client *bridge.Client) {
 	addTool(server, &mcp.Tool{Name: "inspect_scene", Description: "Get the whole scene in one call: context, per-layer object counts and frame ranges, layer colors, markers, and the BPM grid. Use this first; use inspect_timeline for individual objects."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input inspectSceneInput) (*mcp.CallToolResult, protocol.SceneOverview, error) {
@@ -232,142 +264,127 @@ func addQueryTools(server *mcp.Server, client *bridge.Client) {
 			return nil, output, nil
 		})
 
-	addTool(server, &mcp.Tool{Name: "summarize_timeline", Description: "Summarize object counts and occupied ranges per layer."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, timelineSummaryOutput, error) {
-			current, objects, err := readFilteredTimeline(ctx, client, input)
+	addTool(server, &mcp.Tool{Name: "analyze_timeline", Description: "Summarize object counts and occupied ranges per layer, list gaps, or list overlaps."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input analyzeTimelineInput) (*mcp.CallToolResult, analyzeTimelineOutput, error) {
+			out := analyzeTimelineOutput{Operation: input.Operation}
+			switch input.Operation {
+			case "summary", "gaps", "overlaps":
+			default:
+				return nil, out, errors.New("operation must be summary, gaps, or overlaps")
+			}
+			current, objects, err := readFilteredTimeline(ctx, client, timelineAnalysisInput{
+				LayerStart: input.LayerStart, LayerEnd: input.LayerEnd, FrameStart: input.FrameStart, FrameEnd: input.FrameEnd,
+			})
 			if err != nil {
-				return nil, timelineSummaryOutput{}, err
+				return nil, out, err
 			}
-			out := timelineSummaryOutput{Context: current, ObjectCount: len(objects), Layers: []layerSummary{}, Start: -1, End: -1}
-			byLayer := map[int][]protocol.Object{}
-			for _, object := range objects {
-				byLayer[object.Layer] = append(byLayer[object.Layer], object)
-				if out.Start < 0 || object.Start < out.Start {
-					out.Start = object.Start
+			out.Context = &current
+			switch input.Operation {
+			case "summary":
+				out.ObjectCount = len(objects)
+				out.Start, out.End = -1, -1
+				byLayer := groupObjectsByLayer(objects)
+				keys := make([]int, 0, len(byLayer))
+				for layer := range byLayer {
+					keys = append(keys, layer)
 				}
-				if object.End > out.End {
-					out.End = object.End
+				sort.Ints(keys)
+				for _, layer := range keys {
+					values := byLayer[layer]
+					start, end := values[0].Start, values[0].End
+					for _, object := range values[1:] {
+						start = min(start, object.Start)
+						end = max(end, object.End)
+					}
+					out.Layers = append(out.Layers, layerSummary{Layer: layer, ObjectCount: len(values), Start: start, End: end})
+					for _, object := range values {
+						if out.Start < 0 || object.Start < out.Start {
+							out.Start = object.Start
+						}
+						out.End = max(out.End, object.End)
+					}
 				}
-			}
-			keys := make([]int, 0, len(byLayer))
-			for layer := range byLayer {
-				keys = append(keys, layer)
-			}
-			sort.Ints(keys)
-			for _, layer := range keys {
-				values := byLayer[layer]
-				start, end := values[0].Start, values[0].End
-				for _, object := range values[1:] {
-					start = min(start, object.Start)
-					end = max(end, object.End)
+			case "gaps":
+				for layer, values := range groupObjectsByLayer(objects) {
+					sortObjects(values)
+					for index := 1; index < len(values); index++ {
+						if values[index].Start > values[index-1].End+1 {
+							out.Gaps = append(out.Gaps, timelineGap{Layer: layer, Start: values[index-1].End + 1, End: values[index].Start - 1})
+						}
+					}
 				}
-				out.Layers = append(out.Layers, layerSummary{Layer: layer, ObjectCount: len(values), Start: start, End: end})
+				sort.Slice(out.Gaps, func(i, j int) bool {
+					if out.Gaps[i].Layer == out.Gaps[j].Layer {
+						return out.Gaps[i].Start < out.Gaps[j].Start
+					}
+					return out.Gaps[i].Layer < out.Gaps[j].Layer
+				})
+			case "overlaps":
+				for layer, values := range groupObjectsByLayer(objects) {
+					sortObjects(values)
+					for i := 0; i < len(values); i++ {
+						for j := i + 1; j < len(values) && values[j].Start <= values[i].End; j++ {
+							out.Overlaps = append(out.Overlaps, timelineOverlap{
+								Layer: layer, Start: values[j].Start, End: min(values[i].End, values[j].End),
+								ObjectIDs: []uint64{values[i].ID, values[j].ID},
+							})
+						}
+					}
+				}
 			}
 			return nil, out, nil
 		})
-
-	addTool(server, &mcp.Tool{Name: "find_gaps", Description: "Find empty frame ranges between objects on each layer."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, gapsOutput, error) {
-			current, objects, err := readFilteredTimeline(ctx, client, input)
-			if err != nil {
-				return nil, gapsOutput{}, err
-			}
-			byLayer := groupObjectsByLayer(objects)
-			gaps := []timelineGap{}
-			for layer, values := range byLayer {
-				sortObjects(values)
-				for i := 1; i < len(values); i++ {
-					if values[i].Start > values[i-1].End+1 {
-						gaps = append(gaps, timelineGap{Layer: layer, Start: values[i-1].End + 1, End: values[i].Start - 1})
+	addTool(server, &mcp.Tool{Name: "audit_scene", Description: "Count used effects, list used media, find missing media, or find objects outside the scene frame range."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, input auditSceneInput) (*mcp.CallToolResult, auditSceneOutput, error) {
+			out := auditSceneOutput{Operation: input.Operation}
+			switch input.Operation {
+			case "effects":
+				current, objects, err := readAllTimelineWithEffects(ctx, client)
+				if err != nil {
+					return nil, out, err
+				}
+				out.Context = &current
+				out.Effects = map[string]int{}
+				for _, object := range objects {
+					for _, effect := range object.Effects {
+						out.Effects[effect.Name]++
 					}
 				}
-			}
-			sort.Slice(gaps, func(i, j int) bool {
-				if gaps[i].Layer == gaps[j].Layer {
-					return gaps[i].Start < gaps[j].Start
+			case "media", "missing_media":
+				current, objects, err := readAllTimeline(ctx, client)
+				if err != nil {
+					return nil, out, err
 				}
-				return gaps[i].Layer < gaps[j].Layer
-			})
-			return nil, gapsOutput{Context: current, Gaps: gaps}, nil
-		})
-
-	addTool(server, &mcp.Tool{Name: "find_overlaps", Description: "Find overlapping objects on the same layer."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, overlapsOutput, error) {
-			current, objects, err := readFilteredTimeline(ctx, client, input)
-			if err != nil {
-				return nil, overlapsOutput{}, err
-			}
-			values := []timelineOverlap{}
-			byLayer := groupObjectsByLayer(objects)
-			for layer, layerObjects := range byLayer {
-				sortObjects(layerObjects)
-				for i := 0; i < len(layerObjects); i++ {
-					for j := i + 1; j < len(layerObjects) && layerObjects[j].Start <= layerObjects[i].End; j++ {
-						values = append(values, timelineOverlap{Layer: layer, Start: layerObjects[j].Start, End: min(layerObjects[i].End, layerObjects[j].End), ObjectIDs: []uint64{layerObjects[i].ID, layerObjects[j].ID}})
+				out.Context = &current
+				media, err := collectUsedMedia(ctx, client, objects)
+				if err != nil {
+					return nil, out, err
+				}
+				if input.Operation == "media" {
+					out.Media = media
+					return nil, out, nil
+				}
+				for file, ids := range media {
+					if _, err := os.Stat(file); err != nil {
+						out.Missing = append(out.Missing, missingMedia{File: file, ObjectIDs: ids})
 					}
 				}
-			}
-			return nil, overlapsOutput{Context: current, Overlaps: values}, nil
-		})
-
-	addTool(server, &mcp.Tool{Name: "list_used_effects", Description: "Count effect usage in the current scene."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, usedEffectsOutput, error) {
-			current, objects, err := readAllTimelineWithEffects(ctx, client)
-			if err != nil {
-				return nil, usedEffectsOutput{}, err
-			}
-			values := map[string]int{}
-			for _, object := range objects {
-				for _, effect := range object.Effects {
-					values[effect.Name]++
+				sort.Slice(out.Missing, func(i, j int) bool { return out.Missing[i].File < out.Missing[j].File })
+			case "outside_scene":
+				current, objects, err := readAllTimeline(ctx, client)
+				if err != nil {
+					return nil, out, err
 				}
-			}
-			return nil, usedEffectsOutput{Context: current, Effects: values}, nil
-		})
-
-	addTool(server, &mcp.Tool{Name: "list_used_media", Description: "List media paths and the objects that reference them."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, usedMediaOutput, error) {
-			current, objects, err := readAllTimeline(ctx, client)
-			if err != nil {
-				return nil, usedMediaOutput{}, err
-			}
-			values, err := collectUsedMedia(ctx, client, objects)
-			return nil, usedMediaOutput{Context: current, Media: values}, err
-		})
-
-	addTool(server, &mcp.Tool{Name: "find_missing_media", Description: "Find referenced media files that do not exist on the MCP server machine."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, missingMediaOutput, error) {
-			current, objects, err := readAllTimeline(ctx, client)
-			if err != nil {
-				return nil, missingMediaOutput{}, err
-			}
-			used, err := collectUsedMedia(ctx, client, objects)
-			if err != nil {
-				return nil, missingMediaOutput{}, err
-			}
-			missing := []missingMedia{}
-			for file, ids := range used {
-				if _, err := os.Stat(file); err != nil && os.IsNotExist(err) {
-					missing = append(missing, missingMedia{File: file, ObjectIDs: ids})
+				out.Context = &current
+				for _, object := range objects {
+					if object.Start < 0 || object.End > current.FrameMax {
+						out.Objects = append(out.Objects, object)
+					}
 				}
+			default:
+				return nil, out, errors.New("operation must be effects, media, missing_media, or outside_scene")
 			}
-			sort.Slice(missing, func(i, j int) bool { return missing[i].File < missing[j].File })
-			return nil, missingMediaOutput{Context: current, Missing: missing}, nil
-		})
-
-	addTool(server, &mcp.Tool{Name: "find_out_of_scene_objects", Description: "Find objects outside an explicit intended frame or layer range."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input timelineAnalysisInput) (*mcp.CallToolResult, outOfRangeOutput, error) {
-			current, objects, err := readAllTimeline(ctx, client)
-			if err != nil {
-				return nil, outOfRangeOutput{}, err
-			}
-			out := []protocol.Object{}
-			for _, o := range objects {
-				if (input.LayerStart != nil && o.Layer < *input.LayerStart) || (input.LayerEnd != nil && o.Layer > *input.LayerEnd) || (input.FrameStart != nil && o.Start < *input.FrameStart) || (input.FrameEnd != nil && o.End > *input.FrameEnd) {
-					out = append(out, o)
-				}
-			}
-			return nil, outOfRangeOutput{Context: current, Objects: out}, nil
+			return nil, out, nil
 		})
 }
 

@@ -1,129 +1,92 @@
 # MCPツール
 
-変更操作には、直前の`get_context`が返す`session_id`、`generation`、`scene_id`が必要です。object IDも同じコンテキスト内でのみ有効です。
+変更操作には、直前の`get_context`が返す`session_id`、`generation`、`scene_id`を渡します。object IDは同じコンテキスト内でのみ有効です。
 
-作業を始めるときは`inspect_scene`を使ってください。コンテキスト、レイヤー毎のobject数とフレーム範囲、レイヤー色、マーカー、BPMを1回の呼び出しで取得できます。object個別の内容が必要になったら`inspect_timeline`や`inspect_objects`を使います。
+作業を始めるときは`inspect_scene`を使ってください。コンテキスト、レイヤーごとのobject数とフレーム範囲、レイヤー色、マーカー、BPMを1回で取得できます。個々のobjectが必要になったら`inspect_timeline`や`inspect_object`を使います。
 
-AviUtl2がプロジェクトを開くまでは、編集データを扱うツールが`NO_PROJECT`（再試行可能）を返します。本体の起動直後やプロジェクト未作成の状態では、プロジェクトを作成・読み込みしてから再試行してください。`ping`と`diagnose_connection`はその状態でも動作します。
+複数の操作をまとめるときは`execute_batch`を使ってください。1回の呼び出しで1つのUndo単位になります。
 
-典型的な流れ:
+## シーン把握
 
-1. `inspect_scene`で全体像と`session_id` / `generation` / `scene_id`を取得
-2. 必要なら`inspect_timeline`、`inspect_object`、`inspect_object_values`で詳細を確認
-3. `dry_run`付きの編集ツールで計画を確認
-4. 同じ引数で`dry_run`を外して実行（応答の`mutation.context`が新しいコンテキスト）
-5. `render_preview`や`render_change_comparison`で結果を目視確認
+- `ping`: ブリッジが応答するか確認する
+- `get_context`: シーン、カーソル、選択範囲、表示範囲、解像度、同時実行トークンを取得する
+- `inspect_scene`: シーン全体の概要を取得する。`include_empty`で空レイヤーを含め、`layer_start` / `layer_end` / `max_objects`で範囲を制限する
+- `inspect_timeline`: 範囲内のobjectとレイヤー状態を取得する
+- `inspect_object`: 1件または最大100件のobjectを取得する。`object_id`か`object_ids`を指定する
+- `inspect_object_values`: objectの設定項目、raw値、トラック情報、指定フレームの値を取得する。`sample_sections`で各区間の開始フレームを一括取得する
+- `get_selection`: フォーカス中のobjectと選択中のobjectを取得する
 
-編集系ツールは1回の呼び出しで1つのUndo単位になります。複数の変更をまとめたいときは`execute_batch`を使ってください。
+## 検索・分析
 
-## 取得・検索
+- `find_objects`: 選択、フォーカス、名前、エフェクト、素材パス、レイヤー、フレーム範囲でobjectを検索する
+- `analyze_timeline`: `operation`で切り替える。`summary`はレイヤーごとのobject数と範囲、`gaps`は空き区間、`overlaps`は重なりを返す
+- `find_layers`: `layer_filter`（`used` / `empty` / `all`）と名前でレイヤーを検索する
+- `audit_scene`: `operation`で切り替える。`effects`は使用エフェクト数、`media`は使用素材、`missing_media`は見つからない素材、`outside_scene`はシーン範囲外のobjectを返す
+- `preflight_media`: 素材を追加せず、対応可否とメタデータを返す
 
-- `inspect_scene`: シーン全体の概要。`include_empty`で空レイヤーも含め、`layer_start` / `layer_end` / `max_objects`で範囲を制限
-- `ping` / `get_context` / `get_selection`: 接続状態、現在のシーン、選択を取得
-- `inspect_timeline` / `inspect_object` / `inspect_objects`: タイムラインとobjectを取得
-  - objectとエフェクトの`native_id`はSDK側の64bit IDを10進文字列で返します。編集には引き続きブリッジ側の`id`（`object_id`）を使います。
-  - objectにはグループ・カメラ制御対象とクリッピングの`flags`を含みます。
-  - `layers`にはレイヤー名・表示・ロックに加えて背景色`color`（`RRGGBBAA`）を含みます。既定色またはAviUtl2 2.1.13未満では省略されます。
-- `inspect_object_values` / `inspect_section_values`: エフェクト値、トラック、区間ごとの値を取得
-- `list_effects` / `list_effect_items`: 利用可能なエフェクトと項目を取得
-- `find_objects`: 名前、エフェクト、素材種別・解像度・長さ、配置、選択で検索
-- `summarize_timeline` / `find_gaps` / `find_overlaps`: タイムラインを分析
-- `list_used_effects` / `list_used_media` / `find_missing_media`: 使用要素を集計・検査
-- `find_out_of_scene_objects` / `find_layers` / `find_empty_layers`: 範囲外objectやレイヤーを検査
-- `get_markers` / `get_bpm_grid`: マーカーと可変BPMグリッドを取得
+## オブジェクト編集
 
-## 基本編集
+- `add_text`: テキストを配置する
+- `add_media`: 素材を配置する。`files`を渡すと順に並べ、各ファイルを事前検査する
+- `update_object`: 位置、名前、設定項目を1つのUndo単位で変更する
+- `duplicate_objects`: エフェクトとアニメーションを保ったまま複製する。`repeat`はオフセット繰り返し、`rows`と`columns`はグリッド複製
+- `delete_objects`: 指定・選択・フォーカスのobjectをまとめて削除する
+- `set_object_flags`: グループ・カメラ制御・クリッピングのフラグを一括適用する。指定したフラグだけを変更する
+- `replace_media`: `file`で素材を差し替える。`relink_from_dir`でファイル名を頼りに再リンクする
+- `replace_text`: テキストを検索置換する
 
-- `add_text` / `add_media` / `add_media_sequence`: テキストや素材を配置
-- `update_object` / `delete_object` / `delete_objects`: objectを変更・削除
-- `duplicate_objects` / `duplicate_pattern`: エフェクトを保ったまま複製
-- `add_effect` / `delete_effect` / `set_effect_state`: エフェクトを編集
-- `replace_media` / `replace_media_bulk` / `relink_media`: 素材を置換・再リンク
-- `replace_text`: 複数テキストを検索置換
-- `set_object_flags`: `object_ids` / `selected` / `focus`の対象へフラグを一括適用。`dry_run`と変更後objectの取得に対応
+## エフェクトと設定値
 
-## 配置・長さ
+- `list_effects`: エフェクト一覧を返す。`effect`を指定するとその設定項目を返す
+- `edit_effect`: `operation`で切り替える。`add`は追加、`delete`は削除、`set_state`は有効・無効や並び順の変更
+- `apply_properties`: object間で設定値をコピーする。`template`でフェード・スライド・ズームのトラックを複製する
+- `set_track_values`: `inspect_object_values`で取得したraw値を適用する
 
-- `shift_objects` / `align_objects` / `distribute_objects` / `stagger_objects`: 移動・整列
-- `sequence_objects` / `pack_objects` / `normalize_gaps`: 連続配置と間隔調整
-- `insert_time`: 指定位置へ空き時間を挿入
-- `trim_objects` / `fit_objects` / `fit_objects_to_media`: 長さを調整
-- `move_to_layers` / `name_layers`: レイヤーへ分類し命名
-- `set_layer_colors`: レイヤーの背景色を一括設定。`layer_start`と`layer_end`の範囲へ`color`を適用するか、`colors`で1レイヤー1色を指定。`RRGGBB` / `RRGGBBAA` / `#RRGGBB`を受け付け、空文字・`default`で既定色へ戻します。`dry_run`に対応
-- `snap_objects_to_bpm`: BPMグリッドへ吸着
+## 配置と長さ
 
-## 区間・マーカー・設定
+- `arrange_objects`: `operation`で切り替える。`align`、`distribute`、`stagger`、`sequence`、`pack`、`normalize_gaps`、`snap_to_bpm`。衝突は編集前に検出する
+- `retime_objects`: `operation`で切り替える。`shift`、`insert_time`、`trim`、`fit`、`fit_media`
+- `move_to_layers`: 順序、名前、最初のエフェクトでobjectをレイヤーへ振り分ける
+- `edit_layers`: `operation`で切り替える。`name`は連番の名前、`color`は背景色（AviUtl2 2.1.13以降）。空の色は既定色へ戻す
+- `edit_sections`: `operation`で切り替える。`split`は指定フレームで分割、`create`・`delete`・`move`は各区間を編集する
 
-- `split_objects` / `edit_sections`: 中間点を一括編集
-- `edit_markers` / `split_at_markers` / `place_objects_at_markers`: マーカーを編集・利用
-- `set_bpm_grid` / `set_bpm_grid_list`: 固定または可変BPMを設定
-- `set_scene_settings`: 現在のシーン設定を変更
-- `apply_properties`: object間で設定値やアニメーションを複製
-- `set_track_values`: AviUtl2から取得済みのrawトラック値を適用
-- `apply_animation_template`: テンプレートobjectのfade・slide・zoomを複製
+## マーカーとBPM
 
-## プレビュー・診断
-
-- `render_preview` / `render_contact_sheet` / `render_range_contact_sheet`: PNGを取得
-- `render_collision_sheet`: 重なり位置を一覧表示
-- `capture_preview_snapshot` / `render_snapshot_comparison`: 編集前後を比較
-- `render_change_comparison`: 2フレームを比較
-- `preflight_media`: 素材を追加せず対応可否と情報を検査
-- `diagnose_connection` / `get_server_log` / `reconnect_bridge`: 接続・SDK・直近通信を診断。`diagnose_connection`は本体バージョンと`capabilities`（レイヤー背景色・高DPI比率の対応状況）も返します。
+- `markers`: `operation`で切り替える。`list`は一覧、`edit`は一括編集、`split_objects`はマーカー位置で分割、`place_objects`はマーカーへ配置する
+- `bpm_grid`: `operation`で切り替える。`get`は取得、`set`は先頭テンポの設定、`set_list`は可変BPM全体の置き換え
+- `set_scene_settings`: シーン名、解像度、フレームレート、サンプルレートを変更する。シーン設定はUndoできない
 
 ## シーン・プロジェクト・出力
 
-AviUtl2 **2.1.10以上** が必要です。
+- `scenes`: `operation`で切り替える。`list`は一覧、`select`は切替、`create`は作成して切替。切替と作成の後はobject IDが失効する
+- `project`: `operation`で切り替える。`create`、`open`、`save`。`show_confirm`で本体の確認ダイアログを出す
+- `output`: `operation`で切り替える。`list_plugins`は出力プラグイン一覧、`start`は出力開始、`status`はジョブ状態。`start`の応答は受付であり、出力完了ではない
 
-- `list_scenes`: ID・名前・現在のシーンとコンテキストを取得
-- `select_scene`: `target_scene_id`または一意に一致する`name`で切替。`scene_id`は変更前コンテキストの照合用
-- `create_scene`: `name`、任意の`label`で作成して切替
-- `create_project`: 新規プロジェクトを作成し、現在のプロジェクトを置換
-- `open_project`: 絶対パスの`file`を読み込み、現在のプロジェクトを置換
-- `save_project`: 絶対パスの`file`へSDKのバックアップと同じ形式で保存
-- `list_output_plugins`: 出力に指定できるプラグイン名を取得
-- `output_file`: `file`と`output_plugin`を指定し、現在のシーンの出力を開始。任意の`save_project_file`で出力前にプロジェクトを保存
-- `get_output_status`: `job_id`で状態を取得。省略すると最新ジョブ。ブリッジ内で直近20件を保持
+## プレビュー
 
-シーン・プロジェクト作成では`width` / `height` / `rate` / `scale` / `sample_rate` / `background`を省略すると、現在のシーン設定を引き継ぎます。`background`は`RRGGBBAA`の8桁で、SDKでは末尾が`ff`以外の場合は透明色として扱います。シーン一覧・切替・作成は一覧と新しいコンテキストをまとめて返すため、続けて編集できます。切替・作成・読み込み後は古いobject IDが失効します。同じシーンを選び直すだけなら失効しません。
+- `render_preview`: 1フレームをPNGで返す
+- `render_contact_sheet`: 最大16フレームを1枚のPNGにまとめる。`source`は`frames`、`range`、`collision`
+- `compare_frames`: `operation`で切り替える。`compare`は2フレームの比較、`capture`は編集前スナップショットの取得、`compare_capture`はスナップショットとの比較
 
-`create_project` / `open_project`の`show_confirm`は既定で`false`です。`true`にすると本体の保存・キャンセル確認ダイアログを表示します。これらの操作とシーン切替・作成、保存、出力開始には`timeout_ms`を指定でき、既定は30000、最大300000です。
+## 一括と診断
 
-出力は非同期です。`output_file`の応答は出力開始の受付であり、完了ではありません。`job.state`は`preparing` / `starting` / `running` / `ended` / `rejected`で、`ended`は出力状態を抜けたことだけを表します。SDKは成功・失敗・キャンセルの判別結果を公開していないため、開始後の`outcome`は`unknown`です。開始拒否時は`not_started`になります。
+- `execute_batch`: 最大100操作を1つの編集区間で実行する。事前検査、`dry_run`、進捗通知、タイムアウト、実行後のobject取得に対応する
+- `diagnose_connection`: サーバー、ブリッジ、本体のバージョンと`capabilities`、遅延、制約を返す。`reconnect`でソケットを開き直し、`include_log`で直近の通信を返す
 
-出力プラグインの設定は本体側の設定を使用し、任意のエンコーダ設定をMCPから組み立てる機能はありません。通信キャンセル・タイムアウトは、本体へ送信済みの操作や出力を中止しません。出力開始後に応答を失った場合も、再接続して`get_output_status`を引数なしで呼ぶことで最新ジョブを確認できます。本体再起動後はジョブ履歴が失効します。
+## 本体バージョンによる違い
 
-フラグ更新例（ほかのフラグは保持）:
-
-```json
-{
-  "session_id": "get_contextの値",
-  "generation": 4,
-  "scene_id": 0,
-  "selected": true,
-  "flags": { "enable_camera": false, "clipping_object": true },
-  "dry_run": true
-}
-```
-
-`flags`には`enable_group` / `enable_camera` / `clipping_object` / `clipping_upper_object`を指定できます。`execute_batch`でも`op: "set_object_flags"`、`object_id`（または作成結果の`result_ref`）、`flags`で利用できます。
-
-## 本体バージョンによる機能差
-
-プラグインはAviUtl2 2.1.10以降で読み込まれます。それ以降に追加されたSDK関数は、本体のバージョンを確認してから呼び出します。`diagnose_connection`の`bridge.capabilities`で現在の対応状況を確認できます。
-
-| 機能 | 必要バージョン | 未対応時の動作 |
+| 機能 | 必要バージョン | 未対応時 |
 | --- | --- | --- |
-| シーン一覧・切替・作成、プロジェクト、出力 | 2.1.10 | プラグインが読み込まれません |
-| レイヤー背景色（`set_layer_colors`、`layers[].color`） | 2.1.13 | 色は省略され、設定は`UNSUPPORTED_VERSION` |
+| シーン・プロジェクト・出力 | 2.1.10 | プラグインが読み込まれない |
+| レイヤー背景色 | 2.1.13 | 色を省略し、設定は`UNSUPPORTED_VERSION` |
 | `context.high_dpi_ratio` | 2.1.14 | 省略 |
 
-AviUtl2を更新すると追加機能がそのまま有効になります。プラグインの再インストールは不要です。
+対応状況は`diagnose_connection`の`bridge.capabilities`で確認できます。AviUtl2を更新すれば有効になり、プラグインの再インストールは不要です。
 
-## 一括操作と安全性
+## 注意点
 
-`execute_batch`は最大100操作をまとめ、事前検査、`dry_run`、進捗通知、タイムアウト、変更後objectの再取得に対応します。高水準編集も配置衝突を事前検査します。
-
-一括操作はトランザクションではなく、途中で失敗すると先に成功した変更が残る場合があります。AviUtl2 SDKにはUndo実行APIがなく、シーン設定変更もUndo対象外です。シーン・プロジェクト操作と出力は`execute_batch`には含められません。これらのSDK関数は読み取り／編集ロックの外で実行する必要があります。
-
-トラック値の内部表現はSDKで公開されていません。`set_track_values`には`inspect_object_values`で取得した値を渡してください。loopback通信に認証はないため、同じPC上のプロセスから接続できます。
+- 一括操作はトランザクションではありません。途中で失敗すると、先に成功した変更は残ります。
+- シーン設定の変更はUndoの対象外です。
+- 通信のキャンセルやタイムアウトは、送信済みの操作や出力を止めません。
+- ブリッジは`127.0.0.1`で待ち受け、認証はありません。同じPC上のプロセスから接続できます。
+- プロジェクトを開くまでは、編集データを扱うツールが`NO_PROJECT`を返します。`ping`と`diagnose_connection`はその状態でも応答します。

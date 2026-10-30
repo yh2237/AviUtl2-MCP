@@ -605,7 +605,6 @@ func New(client *bridge.Client, version string) *mcp.Server {
 			return content, output, nil
 		})
 
-	addContactSheetTool(server, client)
 	addQueryTools(server, client)
 	addDiagnosticsTools(server, client, version)
 	addAdvancedEditTools(server, client)

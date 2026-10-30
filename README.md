@@ -1,16 +1,14 @@
 # AviUtl2 MCP
 
-AviUtl2をMCPから操作するサーバーです。Go製MCPサーバーと、公式SDKを使う小さなC++プラグインで構成しています。
+AviUtl2をMCPから操作するサーバーです。Go製のMCPサーバーと、公式SDKを使うC++プラグインで構成します。
 
 ```text
 MCPクライアント --stdio--> aviutl2-mcp.exe --TCP--> aviutl2-mcp-bridge.aux2 --> AviUtl2
 ```
 
-タイムラインの検索・分析、テキストや素材の追加、一括編集、整列、区間・マーカー・BPM操作、プレビュー比較、接続診断に対応します。変更前の検査と`dry_run`も利用できます。
+タイムラインの検索と分析、テキストや素材の追加、一括編集、整列、区間・マーカー・BPM操作、プレビュー比較、シーン・プロジェクト・出力、接続診断に対応します。編集ツールは`dry_run`と事前検査を備えます。
 
-シーンの一覧・切替・作成、オブジェクトフラグの一括設定、プロジェクトの作成・読み込み・保存、出力開始とジョブ状態の取得にも対応します。
-
-AviUtl2 2.1.13以降ではレイヤーの背景色を取得・設定でき、2.1.14以降では`high_dpi_ratio`も取得できます。古い本体でも動くよう、新しいSDK関数は本体バージョンを判定してから使います。対応状況は`diagnose_connection`で確認できます。
+40ツールを用途別にまとめています。全体像は`inspect_scene`、変更前の確認は`dry_run`、複数操作は`execute_batch`を使ってください。
 
 ## インストール
 
@@ -25,16 +23,17 @@ Plugin\AviUtl2-MCP\aviutl2-mcp.exe
 - `AVIUTL2_MCP_BRIDGE_ADDR`: 接続先。既定値は`127.0.0.1:28552`
 - `AVIUTL2_MCP_BRIDGE_TIMEOUT`: タイムアウト。既定値は`5s`
 
-まだ実機検証中です。重要なプロジェクトはバックアップしてから利用してください。
+AviUtl2 2.1.10以降が必要です。2.1.13以降ではレイヤーの背景色、2.1.14以降では`high_dpi_ratio`も使えます。古い本体でも動くよう、新しいSDK関数は本体バージョンを判定してから呼びます。
 
 ## 開発
 
 ```powershell
 go test ./...
-.\scripts\package.ps1 -Version 0.0.3 `
+.\scripts\package.ps1 -Version 0.3.0-test `
   -AviUtl2SdkDir C:\path\to\aviutl2_sdk\include\aviutl2_sdk
 ```
 
 - [MCPツール](docs/TOOLS.md)
+- [旧ツールからの移行](docs/MIGRATION.md)
 - [開発・ビルド](docs/DEVELOPMENT.md)
 - [内部プロトコル](docs/PROTOCOL.md)

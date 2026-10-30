@@ -83,7 +83,7 @@ func (s *smoke) restore(file string) error {
 		return err
 	}
 	var out protocol.ProjectResult
-	if err := s.call("open_project", s.args(map[string]any{"file": file, "timeout_ms": 60000}), &out); err != nil {
+	if err := s.call("project", s.args(map[string]any{"operation": "open", "file": file, "timeout_ms": 60000}), &out); err != nil {
 		return err
 	}
 	s.current = out.Context
@@ -96,7 +96,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	backup := prefix + "-original.aup2"
 	fixture := prefix + "-fixture.aup2"
 	var saved protocol.ProjectResult
-	if err := s.call("save_project", s.args(map[string]any{"file": backup, "timeout_ms": 60000}), &saved); err != nil {
+	if err := s.call("project", s.args(map[string]any{"operation": "save", "file": backup, "timeout_ms": 60000}), &saved); err != nil {
 		return err
 	}
 	if info, err := os.Stat(backup); err != nil || info.Size() == 0 {
@@ -109,7 +109,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 		}
 	}()
 	var project protocol.ProjectResult
-	if err := s.call("create_project", s.args(map[string]any{"width": 320, "height": 180, "rate": 30, "scale": 1, "sample_rate": 48000, "background": "000000ff"}), &project); err != nil {
+	if err := s.call("project", s.args(map[string]any{"operation": "create", "width": 320, "height": 180, "rate": 30, "scale": 1, "sample_rate": 48000, "background": "000000ff"}), &project); err != nil {
 		return err
 	}
 	s.current = project.Context
@@ -128,15 +128,15 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	}
 	id := *mutation.Mutation.Results[0].ObjectID
 	var object struct {
-		Object protocol.ObjectResult `json:"object"`
+		Objects protocol.ObjectsResult `json:"objects"`
 	}
 	if err := s.call("inspect_object", map[string]any{"object_id": id, "include_effects": true}, &object); err != nil {
 		return err
 	}
-	if object.Object.Object.NativeID == "" || object.Object.Object.NativeID == "0" || len(object.Object.Object.Effects) == 0 || object.Object.Object.Effects[0].NativeID == "" {
+	if len(object.Objects.Objects) != 1 || object.Objects.Objects[0].NativeID == "" || object.Objects.Objects[0].NativeID == "0" || len(object.Objects.Objects[0].Effects) == 0 || object.Objects.Objects[0].Effects[0].NativeID == "" {
 		return fmt.Errorf("native object/effect IDs missing: %+v", object)
 	}
-	fmt.Printf("NATIVE IDs object=%s effect=%s\n", object.Object.Object.NativeID, object.Object.Object.Effects[0].NativeID)
+	fmt.Printf("NATIVE IDs object=%s effect=%s\n", object.Objects.Objects[0].NativeID, object.Objects.Objects[0].Effects[0].NativeID)
 	flags := s.args(map[string]any{"object_ids": []uint64{id}, "flags": map[string]any{"enable_camera": false, "clipping_object": true}, "dry_run": true})
 	if err := s.call("set_object_flags", flags, nil); err != nil {
 		return err
@@ -148,8 +148,8 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	if err := s.call("inspect_object", map[string]any{"object_id": id}, &object); err != nil {
 		return err
 	}
-	if object.Object.Object.Flags.EnableCamera || !object.Object.Object.Flags.ClippingObject {
-		return fmt.Errorf("flags were not applied: %+v", object.Object.Object.Flags)
+	if len(object.Objects.Objects) != 1 || object.Objects.Objects[0].Flags.EnableCamera || !object.Objects.Objects[0].Flags.ClippingObject {
+		return fmt.Errorf("flags were not applied: %+v", object.Objects.Objects)
 	}
 	// Remove clipping again to make the preview/output visible.
 	if err := s.call("set_object_flags", s.args(map[string]any{"object_ids": []uint64{id}, "flags": map[string]any{"clipping_object": false}}), nil); err != nil {
@@ -171,22 +171,22 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 		return err
 	}
 	if diagnostics.Bridge.Capabilities.LayerColor.Supported {
-		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": "#3366cc", "dry_run": true}), nil); err != nil {
+		if err := s.call("edit_layers", s.args(map[string]any{"operation": "color", "layer_start": 0, "layer_end": 0, "color": "#3366cc", "dry_run": true}), nil); err != nil {
 			return err
 		}
-		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": "3366ccff"}), nil); err != nil {
+		if err := s.call("edit_layers", s.args(map[string]any{"operation": "color", "layer_start": 0, "layer_end": 0, "color": "3366ccff"}), nil); err != nil {
 			return err
 		}
 		var layers struct {
 			Layers []protocol.Layer `json:"layers"`
 		}
-		if err := s.call("find_layers", map[string]any{"layer_start": 0, "include_empty": true}, &layers); err != nil {
+		if err := s.call("find_layers", map[string]any{"layer_start": 0, "layer_filter": "all"}, &layers); err != nil {
 			return err
 		}
 		if len(layers.Layers) == 0 || layers.Layers[0].Color == nil || *layers.Layers[0].Color != "3366ccff" {
 			return fmt.Errorf("layer color was not applied: %+v", layers.Layers)
 		}
-		if err := s.call("set_layer_colors", s.args(map[string]any{"layer_start": 0, "layer_end": 0, "color": ""}), nil); err != nil {
+		if err := s.call("edit_layers", s.args(map[string]any{"operation": "color", "layer_start": 0, "layer_end": 0, "color": ""}), nil); err != nil {
 			return err
 		}
 		fmt.Println("PASS layer colors")
@@ -199,7 +199,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	}
 	mainScene := s.current.SceneID
 	var scenes protocol.ScenesResult
-	if err := s.call("create_scene", s.args(map[string]any{"name": "MCP smoke sub", "label": "MCP test"}), &scenes); err != nil {
+	if err := s.call("scenes", s.args(map[string]any{"operation": "create", "name": "MCP smoke sub", "label": "MCP test"}), &scenes); err != nil {
 		return err
 	}
 	s.current = scenes.Context
@@ -211,26 +211,26 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 		return fmt.Errorf("expired object ID was not rejected: %v", err)
 	}
 	fmt.Println("PASS expired object ID rejected")
-	if err := s.call("select_scene", s.args(map[string]any{"target_scene_id": mainScene}), &scenes); err != nil {
+	if err := s.call("scenes", s.args(map[string]any{"operation": "select", "target_scene_id": mainScene}), &scenes); err != nil {
 		return err
 	}
 	s.current = scenes.Context
-	if err := s.call("select_scene", s.args(map[string]any{"name": "MCP smoke sub"}), &scenes); err != nil {
+	if err := s.call("scenes", s.args(map[string]any{"operation": "select", "name": "MCP smoke sub"}), &scenes); err != nil {
 		return err
 	}
 	s.current = scenes.Context
-	if err := s.call("select_scene", s.args(map[string]any{"target_scene_id": mainScene}), &scenes); err != nil {
+	if err := s.call("scenes", s.args(map[string]any{"operation": "select", "target_scene_id": mainScene}), &scenes); err != nil {
 		return err
 	}
 	s.current = scenes.Context
-	if err := s.call("save_project", s.args(map[string]any{"file": fixture}), &project); err != nil {
+	if err := s.call("project", s.args(map[string]any{"operation": "save", "file": fixture}), &project); err != nil {
 		return err
 	}
-	if err := s.call("open_project", s.args(map[string]any{"file": fixture}), &project); err != nil {
+	if err := s.call("project", s.args(map[string]any{"operation": "open", "file": fixture}), &project); err != nil {
 		return err
 	}
 	s.current = project.Context
-	if err := s.call("list_scenes", map[string]any{}, &scenes); err != nil {
+	if err := s.call("scenes", map[string]any{"operation": "list"}, &scenes); err != nil {
 		return err
 	}
 	if len(scenes.Scenes) < 2 {
@@ -241,32 +241,34 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 		if outputPlugin == "PNGファイル出力" {
 			output = prefix + "-output.png"
 		}
-		var status protocol.OutputStatusResult
-		if err := s.call("output_file", s.args(map[string]any{"file": output, "output_plugin": outputPlugin, "save_project_file": prefix + "-before-output.aup2"}), &status); err != nil {
+		var outputResult struct {
+			Status *protocol.OutputStatusResult `json:"status"`
+		}
+		if err := s.call("output", s.args(map[string]any{"operation": "start", "file": output, "output_plugin": outputPlugin, "save_project_file": prefix + "-before-output.aup2"}), &outputResult); err != nil {
 			return err
 		}
-		if status.Job == nil {
+		if outputResult.Status == nil || outputResult.Status.Job == nil {
 			return fmt.Errorf("output job missing")
 		}
-		jobID := status.Job.ID
+		jobID := outputResult.Status.Job.ID
 		if err := s.reconnect(); err != nil {
 			return err
 		}
-		if err := s.call("get_output_status", map[string]any{}, &status); err != nil {
+		if err := s.call("output", map[string]any{"operation": "status"}, &outputResult); err != nil {
 			return err
 		}
-		if status.Job == nil || status.Job.ID != jobID {
+		if outputResult.Status == nil || outputResult.Status.Job == nil || outputResult.Status.Job.ID != jobID {
 			return fmt.Errorf("output job lost after reconnect")
 		}
 		deadline := time.Now().Add(60 * time.Second)
-		for status.Job.State != "ended" && time.Now().Before(deadline) {
+		for outputResult.Status.Job.State != "ended" && time.Now().Before(deadline) {
 			time.Sleep(300 * time.Millisecond)
-			if err := s.call("get_output_status", map[string]any{"job_id": jobID}, &status); err != nil {
+			if err := s.call("output", map[string]any{"operation": "status", "job_id": jobID}, &outputResult); err != nil {
 				return err
 			}
 		}
-		if status.Job.State != "ended" {
-			return fmt.Errorf("output did not end: %+v", status)
+		if outputResult.Status.Job.State != "ended" {
+			return fmt.Errorf("output did not end: %+v", outputResult.Status)
 		}
 		if info, err := os.Stat(output); err != nil || info.Size() == 0 {
 			return fmt.Errorf("output file missing/empty: %v", err)
@@ -326,7 +328,7 @@ func run() error {
 	data, _ := json.Marshal(s.current)
 	fmt.Println("CONTEXT", string(data))
 	var scenes protocol.ScenesResult
-	if err := s.call("list_scenes", map[string]any{}, &scenes); err != nil {
+	if err := s.call("scenes", map[string]any{"operation": "list"}, &scenes); err != nil {
 		return err
 	}
 	data, _ = json.Marshal(scenes.Scenes)
@@ -334,7 +336,7 @@ func run() error {
 	var plugins struct {
 		Plugins []protocol.ModuleInfo `json:"plugins"`
 	}
-	if err := s.call("list_output_plugins", map[string]any{}, &plugins); err != nil {
+	if err := s.call("output", map[string]any{"operation": "list_plugins"}, &plugins); err != nil {
 		return err
 	}
 	data, _ = json.Marshal(plugins.Plugins)

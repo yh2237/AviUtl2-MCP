@@ -34,18 +34,12 @@ type contactSheetCell struct {
 }
 
 type contactSheetOutput struct {
+	Operation  string             `json:"operation,omitempty"`
 	Width      int                `json:"width"`
 	Height     int                `json:"height"`
 	SessionID  string             `json:"session_id"`
 	Generation uint64             `json:"generation"`
 	Cells      []contactSheetCell `json:"cells"`
-}
-
-func addContactSheetTool(server *mcp.Server, client *bridge.Client) {
-	addTool(server, &mcp.Tool{Name: "render_contact_sheet", Description: "Render up to sixteen frames into one PNG for efficient visual review."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, input contactSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
-			return renderContactSheet(ctx, client, input)
-		})
 }
 
 func renderContactSheet(ctx context.Context, client *bridge.Client, input contactSheetInput) (*mcp.CallToolResult, contactSheetOutput, error) {
