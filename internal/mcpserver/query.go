@@ -471,7 +471,7 @@ func sortObjects(objects []protocol.Object) {
 
 func objectMedia(ctx context.Context, client *bridge.Client, id uint64) ([]string, error) {
 	f, r := false, true
-	// Raw values are required for file paths; request them without track metadata or samples.
+	// ファイルパスにはraw値が要る。トラック情報とサンプルは要求しない。
 	result, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams{ObjectID: id, IncludeRawValues: &r, IncludeTrackInfo: &f, IncludeSampledValues: &f})
 	if err != nil {
 		return nil, err

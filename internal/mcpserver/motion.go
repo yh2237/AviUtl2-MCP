@@ -1,8 +1,7 @@
 package mcpserver
 
-// The moving-track form below was measured on AviUtl2, not specified by the
-// SDK as a portable serialization grammar. Keep raw-value copying available via
-// set_track_values. This helper deliberately supports only single-section objects.
+// 移動トラックの書式は実機で確認したもので、SDKが保証する直列化ではない。
+// raw値の再利用はset_track_valuesに任せ、この実装は中間点のないobjectだけを扱う。
 
 import (
 	"context"
@@ -17,7 +16,7 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-// EDIT_HANDLE::EFFECT_ITEM_TYPE_NUMBER in plugin2.h.
+// plugin2.hのEFFECT_ITEM_TYPE_NUMBER。
 const motionNumberItemType = 2
 
 var motionModes = map[string]string{
@@ -57,7 +56,7 @@ func buildTrackValue(t motionTrack) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown motion mode %q; use linear, smooth, instant, random, or constant", mode)
 	}
-	// Zero is the host's movement flags field, not an extra control point.
+	// 末尾の0は移動フラグで、制御点ではない。
 	return from + "," + strconv.FormatFloat(t.To, 'f', -1, 64) + "," + local + ",0", nil
 }
 
@@ -102,8 +101,7 @@ func trackProperties(tracks []motionTrack) ([]protocol.PropertyUpdate, error) {
 	return props, nil
 }
 
-// Validate against the actual object, not just the global effect catalog. An
-// item name can exist globally while its effect is absent from the target.
+// 全体のエフェクト一覧ではなく、対象objectに実際にあるかを確認する。
 func preflightExistingMotion(ctx context.Context, client *bridge.Client, expected mutationContext, id uint64, props []protocol.PropertyUpdate) error {
 	no := false
 	values, err := client.InspectObjectValues(ctx, protocol.InspectObjectValuesParams{
@@ -150,8 +148,8 @@ func preflightExistingMotion(ctx context.Context, client *bridge.Client, expecte
 	return nil
 }
 
-// Before creation we can verify only effects that the creation path guarantees.
-// Other effects must be added explicitly, then configured with set_motion.
+// 作成時に存在が保証されるエフェクトだけを検証する。
+// それ以外は追加後にset_motionで設定する。
 func preflightNewMotion(ctx context.Context, client *bridge.Client, text bool, props []protocol.PropertyUpdate) error {
 	definitions := map[string][]protocol.EffectItem{}
 	for _, property := range props {

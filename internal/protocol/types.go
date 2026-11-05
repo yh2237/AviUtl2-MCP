@@ -146,8 +146,7 @@ type SceneTotals struct {
 	Truncated   bool `json:"truncated"`
 }
 
-// SceneOverview is the whole-scene orientation payload: one bridge round trip
-// instead of separate context, timeline, marker, and BPM reads.
+// シーン全体の概要。context・タイムライン・マーカー・BPMを個別に読まずに1回で返す。
 type SceneOverview struct {
 	Context Context             `json:"context"`
 	Scene   SceneTotals         `json:"scene"`

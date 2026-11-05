@@ -265,7 +265,7 @@ void invalidate_objects() noexcept {
     objects_by_id.clear();
     ids_by_object.clear();
     native_ids_by_id.clear();
-    // IDs must not be reused: read requests carry no expected generation.
+    // 読み取り要求は世代を送らないため、IDを再利用しない。
     generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -1178,7 +1178,7 @@ json execute_operations(const json& operations, EDIT_SECTION* edit) {
             if (!flags.is_object() || flags.empty()) {
                 throw BridgeError("INVALID_ARGUMENT", "flags must contain at least one boolean update");
             }
-            // Validate all entries before changing any flags on this object.
+            // フラグを変更する前に全項目を検証する。
             for (const auto& [key, value] : flags.items()) {
                 if (!value.is_boolean() || (key != "enable_group" && key != "enable_camera" &&
                     key != "clipping_object" && key != "clipping_upper_object")) {
@@ -1805,8 +1805,8 @@ void server_main() noexcept {
     }
 
     while (running.load(std::memory_order_acquire)) {
-        // A blocking accept() is not reliably woken by closesocket() from another thread,
-        // which used to leave aviutl2.exe alive after the window closed. Poll instead.
+        // 別スレッドのclosesocketではacceptが確実に戻らない。
+        // ウィンドウを閉じてもaviutl2.exeが残る原因だったため、selectで待つ。
         fd_set read_set;
         FD_ZERO(&read_set);
         FD_SET(local_listener, &read_set);
@@ -1876,8 +1876,8 @@ extern "C" __declspec(dllexport) void UninitializePlugin() {
     running.store(false, std::memory_order_release);
     close_server_sockets();
     if (server_thread.joinable()) {
-        // The server thread wakes within 200 ms; keep a hard cap so a stuck socket
-        // can never keep the host process alive.
+        // サーバースレッドは200ms以内に戻る。
+        // 詰まっても本体を道連れにしないよう上限を設ける。
         if (WaitForSingleObject(server_thread.native_handle(), 3000) == WAIT_OBJECT_0) {
             server_thread.join();
         } else {

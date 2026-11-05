@@ -154,7 +154,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	if len(object.Objects.Objects) != 1 || object.Objects.Objects[0].Flags.EnableCamera || !object.Objects.Objects[0].Flags.ClippingObject {
 		return fmt.Errorf("flags were not applied: %+v", object.Objects.Objects)
 	}
-	// Remove clipping again to make the preview/output visible.
+	// プレビューと出力が見えるよう、クリッピングを解除する。
 	if err := s.call("set_object_flags", s.args(map[string]any{"object_ids": []uint64{id}, "flags": map[string]any{"clipping_object": false}}), nil); err != nil {
 		return err
 	}
@@ -309,7 +309,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	return nil
 }
 
-// motions runs inside the disposable project created by edits, before restore.
+// editsが作る使い捨てプロジェクト内で実行する。
 func (s *smoke) motions(dir string) error {
 	track := map[string]any{"item": "X", "from": -120, "to": 120, "mode": "linear"}
 	args := s.args(map[string]any{"text": "Motion", "layer": 1, "frame": 10, "length": 101, "tracks": []any{track}})

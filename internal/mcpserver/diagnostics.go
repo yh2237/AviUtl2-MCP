@@ -46,8 +46,8 @@ func addDiagnosticsTools(server *mcp.Server, client *bridge.Client, version stri
 			}
 			current, err := client.GetContext(ctx)
 			if err != nil {
-				// AviUtl2 returns NO_PROJECT until it finishes opening a project.
-				// Report the bridge state instead of failing the whole diagnosis.
+				// プロジェクトを開くまで本体はNO_PROJECTを返す。
+				// 診断全体を失敗させず、ブリッジの状態を返す。
 				var remote *bridge.RemoteError
 				if errors.As(err, &remote) && remote.Code == "NO_PROJECT" {
 					output.ContextError = remote.Message
@@ -64,7 +64,7 @@ func addDiagnosticsTools(server *mcp.Server, client *bridge.Client, version stri
 		})
 }
 
-// limitations lists SDK behavior the MCP layer cannot work around, plus host-dependent gaps.
+// MCP側で回避できないSDKの制約と、本体依存の不足を返す。
 func limitations(bridgeInfo protocol.DiagnosticsResult) []string {
 	values := []string{
 		"The AviUtl2 SDK does not expose an Undo command.",

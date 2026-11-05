@@ -14,8 +14,8 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-// These tests check our serialization contract, not the host's interpolation.
-// Host-version-specific sampled-value/track-info measurements are separate.
+// ここでは直列化の契約だけを確認する。
+// 本体の補間は実機計測に任せる。
 func TestBuildTrackValue(t *testing.T) {
 	cases := []struct {
 		name string
@@ -85,8 +85,8 @@ func TestTrackPropertiesEffectDefaulting(t *testing.T) {
 	}
 }
 
-// A framed fake bridge records the full request, including expected context.
-// It never connects to or mutates a live AviUtl2 instance.
+// 偽ブリッジはリクエスト全体を記録する。
+// 実機には接続しない。
 type motionBridgeFixture struct {
 	context protocol.Context
 	values  protocol.ObjectValuesResult

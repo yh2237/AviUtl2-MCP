@@ -606,7 +606,7 @@ int main() {
     }
     assert(stale_rejected);
 
-    // A new scene can return the same handle address, but must get a new ID.
+    // 新しいシーンでは同じハンドルアドレスが返ることがあるが、IDは新しくする。
     invalidate_objects();
     const auto new_id = register_object(mock_objects.front().get());
     assert(new_id != object_id);

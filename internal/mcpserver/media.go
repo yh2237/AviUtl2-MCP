@@ -72,7 +72,7 @@ func addMediaTools(server *mcp.Server, client *bridge.Client) {
 		})
 }
 
-// mediaIndex maps lower-case file names under root to their first full path.
+// root以下の小文字ファイル名から最初のフルパスへの索引。
 func mediaIndex(root string, recursive bool) (map[string]string, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("relink_from_dir is required")

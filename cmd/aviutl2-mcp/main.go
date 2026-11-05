@@ -12,9 +12,7 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-// version is stamped by scripts/package.ps1 (-X main.version=...). A plain
-// `go build` keeps "dev" so the reported server version can never be mistaken
-// for a released build.
+// versionはscripts/package.ps1が埋め込む。go buildだけではdevのまま。
 var version = "dev"
 
 func main() {

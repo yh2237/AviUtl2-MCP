@@ -15,7 +15,6 @@ import (
 	"github.com/yh2237/AviUtl2-MCP/internal/protocol"
 )
 
-// bridgeError lets a fake bridge answer with a specific protocol error code.
 type bridgeError struct {
 	code    string
 	message string
@@ -23,7 +22,7 @@ type bridgeError struct {
 
 func (e bridgeError) Error() string { return e.message }
 
-// startFakeBridge serves a loopback bridge socket that answers with handler output.
+// ループバックで偽ブリッジを立て、ハンドラの戻り値を返す。
 func startFakeBridge(t *testing.T, handler func(method string, params json.RawMessage) (any, error)) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -87,16 +86,25 @@ func connectTestSession(t *testing.T, address string) *mcp.ClientSession {
 	return session
 }
 
-func TestToolListIncludesSceneOrientationAndLayerColors(t *testing.T) {
+func TestToolSurface(t *testing.T) {
 	tools, err := connectTestSession(t, "127.0.0.1:1").ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	names := map[string]*mcp.Tool{}
+	total := 0
 	for _, tool := range tools.Tools {
 		names[tool.Name] = tool
+		if tool.OutputSchema != nil {
+			t.Fatalf("tool %q declares an output schema; results travel as structuredContent so tools/list stays small", tool.Name)
+		}
+		encoded, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("tool %q input schema: %v", tool.Name, err)
+		}
+		total += len(encoded)
 	}
-	for _, want := range []string{"inspect_scene", "edit_layers", "inspect_timeline", "execute_batch"} {
+	for _, want := range []string{"inspect_scene", "inspect_timeline", "edit_layers", "execute_batch", "set_motion", "add_motion"} {
 		if names[want] == nil {
 			available := make([]string, 0, len(names))
 			for name := range names {
@@ -106,29 +114,8 @@ func TestToolListIncludesSceneOrientationAndLayerColors(t *testing.T) {
 			t.Fatalf("tool %q is missing; registered tools: %v", want, available)
 		}
 	}
-	if names["edit_layers"].InputSchema == nil {
-		t.Fatal("edit_layers has no input schema")
-	}
-}
-
-func TestToolSchemasStayCompact(t *testing.T) {
-	tools, err := connectTestSession(t, "127.0.0.1:1").ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(tools.Tools) < 30 {
 		t.Fatalf("only %d tools were registered", len(tools.Tools))
-	}
-	total := 0
-	for _, tool := range tools.Tools {
-		if tool.OutputSchema != nil {
-			t.Fatalf("tool %q declares an output schema; results travel as structuredContent so tools/list stays small", tool.Name)
-		}
-		encoded, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			t.Fatalf("tool %q input schema: %v", tool.Name, err)
-		}
-		total += len(encoded)
 	}
 	if total > 64<<10 {
 		t.Fatalf("input schemas total %d bytes; keep tools/list below 64 KiB so clients do not spend their context on tool definitions", total)

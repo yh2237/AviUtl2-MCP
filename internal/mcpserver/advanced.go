@@ -27,8 +27,7 @@ type operationPlanOutput struct {
 	Objects    []protocol.Object        `json:"objects,omitempty"`
 }
 
-// toAnyOperations erases the concrete operation type so the tool payload stays readable
-// without tying every grouped tool to []protocol.BatchOperation.
+// 操作の型を消し、ツールごとに[]protocol.BatchOperationへ縛らないようにする。
 func toAnyOperations(operations []protocol.BatchOperation) []any {
 	values := make([]any, 0, len(operations))
 	for _, operation := range operations {
@@ -414,7 +413,7 @@ func executeMovePlanOutput(ctx context.Context, client *bridge.Client, expected 
 	return convertMovePlan(plan), err
 }
 
-// convertMovePlan flattens the collision-aware move plan into the shared plan shape.
+// 衝突を考慮した移動計画を共通の計画形式へ変換する。
 func convertMovePlan(plan timelinePlanOutput) operationPlanOutput {
 	return operationPlanOutput{
 		DryRun:     plan.DryRun,

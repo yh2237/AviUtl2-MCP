@@ -230,12 +230,8 @@ type previewOutput struct {
 	Generation uint64 `json:"generation"`
 }
 
-// addTool registers a tool while keeping output schemas out of tools/list.
-//
-// Almost every result embeds the same large types (protocol.Context, object lists,
-// and []protocol.BatchOperation plans). Declaring them per tool repeated roughly
-// 240 KB of schema in every MCP session, so results are still returned as
-// structuredContent JSON, but the redundant per-tool schema is omitted.
+// 出力スキーマをtools/listから外して登録する。結果はstructuredContentで返すため、
+// ツールごとに同じ大きな型を宣言しない。
 func addTool[In, Out any](server *mcp.Server, tool *mcp.Tool, handler func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
 	mcp.AddTool(server, tool, func(ctx context.Context, request *mcp.CallToolRequest, input In) (*mcp.CallToolResult, any, error) {
 		result, output, err := handler(ctx, request, input)

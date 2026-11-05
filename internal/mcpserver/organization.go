@@ -94,7 +94,7 @@ type editLayersInput struct {
 
 var layerColorPattern = regexp.MustCompile(`^([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 
-// normalizeLayerColor accepts "#RRGGBB", "RRGGBBAA", or a keyword that clears the color.
+// "#RRGGBB"、"RRGGBBAA"、色を解除するキーワードを受け付ける。
 func normalizeLayerColor(value string) (string, error) {
 	trimmed := strings.TrimPrefix(strings.TrimSpace(value), "#")
 	switch strings.ToLower(trimmed) {
