@@ -16,7 +16,6 @@ func TestBuildTrackValue(t *testing.T) {
 		{"smooth", motionTrack{Item: "Y", From: -100, To: 100, Mode: "smooth"}, "-100.00,100.00,補間移動,0.00"},
 		{"instant", motionTrack{Item: "X", From: 0, To: 400, Mode: "instant"}, "0.00,400.00,瞬間移動,0.00"},
 		{"constant", motionTrack{Item: "X", From: 5, To: 5, Mode: "constant"}, "5.00,5.00,再生範囲,0.00"},
-		{"ease flag", motionTrack{Item: "X", From: -300, To: 300, Ease: true}, "-300.00,300.00,直線移動,1.00"},
 		{"custom effect", motionTrack{Item: "X", Effect: "映像再生", From: 1, To: 2}, "1.00,2.00,直線移動,0.00"},
 	}
 	for _, c := range cases {

@@ -10,12 +10,18 @@ package mcpserver
 // where value1 is the value at object start, value2 the value at object end,
 // MODE is one of the localized movement-mode names (直線移動=linear,
 // 補間移動=smooth interpolation, 瞬間移動=instant, ランダム移動=random,
-// 再生範囲=constant/hold) and extra is 0.00 (or 1.00 for an eased ramp).
-// The old field order (value,frame,MODE,value) parses but evaluates to 0.
-// These strings can also be written straight into .aup2 files; the host
-// evaluates them on load. Multi-segment delimiters are NOT evaluated (only the
-// first segment), so one object == one motion segment: exactly how motion
-// should be edited in the AviUtl2 UI anyway.
+// 再生範囲=constant/hold). The trailing token is accepted but measurably does
+// NOT alter the evaluated curve (sampled X at t=10..90% is identical for
+// 0.00 vs 1.00 under 直線移動 and 補間移動), so we always write 0.00.
+// Note: 補間移動 between two endpoints is an asymmetric biased ease-in curve
+// (~31% displacement at t=50%), not a symmetric ease-in-out; motion-design
+// slow-in/slow-out is best composed by chaining short segments with uneven
+// spacing (one object per segment, as the AviUtl2 track bar edits anyway).
+// The alternate order (value,frame,MODE,value) parses and was measured to jump
+// to the trailing value at that frame. These strings can also be written
+// straight into .aup2 files; the host evaluates them on load. Multi-segment
+// concatenation is NOT evaluated (only the first segment), so
+// one object == one motion segment.
 
 import (
 	"context"
@@ -43,7 +49,6 @@ type motionTrack struct {
 	From   float64 `json:"from" jsonschema:"value at the object start frame"`
 	To     float64 `json:"to" jsonschema:"value at the object end frame"`
 	Mode   string  `json:"mode,omitempty" jsonschema:"linear, smooth, instant, random, or constant; default linear"`
-	Ease   bool    `json:"ease,omitempty" jsonschema:"apply the host eased ramp flag (only meaningful for linear/smooth)"`
 }
 
 func buildTrackValue(t motionTrack) (string, error) {
@@ -64,10 +69,7 @@ func buildTrackValue(t motionTrack) (string, error) {
 	if t.Effect == "" {
 		t.Effect = "標準描画"
 	}
-	extra := "0.00"
-	if t.Ease {
-		extra = "1.00"
-	}
+	extra := "0.00" // trailing token: accepted by the host, no measurable curve effect
 	value := strconv.FormatFloat(t.From, 'f', 2, 64) + "," + strconv.FormatFloat(t.To, 'f', 2, 64) + "," + local + "," + extra
 	return value, nil
 }
