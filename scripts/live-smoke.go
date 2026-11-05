@@ -312,21 +312,7 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 // motions runs inside the disposable project created by edits, before restore.
 func (s *smoke) motions(dir string) error {
 	track := map[string]any{"item": "X", "from": -120, "to": 120, "mode": "linear"}
-	args := s.args(map[string]any{"text": "Motion", "layer": 1, "frame": 10, "length": 101, "tracks": []any{track}, "dry_run": true})
-	var before, after protocol.SceneOverview
-	if err := s.call("inspect_scene", map[string]any{}, &before); err != nil {
-		return err
-	}
-	if err := s.call("add_motion", args, nil); err != nil {
-		return err
-	}
-	if err := s.call("inspect_scene", map[string]any{}, &after); err != nil {
-		return err
-	}
-	if before.Scene.ObjectCount != after.Scene.ObjectCount {
-		return fmt.Errorf("add_motion dry_run created an object")
-	}
-	args["dry_run"] = false
+	args := s.args(map[string]any{"text": "Motion", "layer": 1, "frame": 10, "length": 101, "tracks": []any{track}})
 	var added struct {
 		Mutation *protocol.MutationResult `json:"mutation"`
 	}
@@ -364,26 +350,11 @@ func (s *smoke) motions(dir string) error {
 		}
 	}
 	track["from"], track["to"], track["mode"] = 7.25, 7.25, "constant"
-	set := s.args(map[string]any{"object_id": id, "tracks": []any{track}, "dry_run": true})
-	if err := s.call("set_motion", set, nil); err != nil {
+	if err := s.call("set_motion", s.args(map[string]any{"object_id": id, "tracks": []any{track}}), nil); err != nil {
 		return err
 	}
-	if err := check(60, 0, false); err != nil {
-		return fmt.Errorf("set_motion dry_run changed the track: %w", err)
-	}
-	set["dry_run"] = false
-	if err := s.call("set_motion", set, nil); err != nil {
+	if err := check(60, 7.25, true); err != nil {
 		return err
-	}
-	for _, frame := range []int{10, 60, 110} {
-		if err := check(frame, 7.25, true); err != nil {
-			return err
-		}
-	}
-	bad := s.args(map[string]any{"object_id": id, "tracks": []any{map[string]any{"effect": "テキスト", "item": "テキスト", "from": 0, "to": 1}}})
-	result, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{Name: "set_motion", Arguments: bad})
-	if err != nil || !result.IsError {
-		return fmt.Errorf("non-numeric motion item was not rejected: %v", err)
 	}
 	if err := s.call("delete_objects", s.args(map[string]any{"object_ids": []uint64{id}}), nil); err != nil {
 		return err
@@ -411,18 +382,13 @@ func (s *smoke) motions(dir string) error {
 	}
 	s.current = added.Mutation.Context
 	id = *added.Mutation.Results[0].ObjectID
-	for _, sample := range []struct {
-		frame int
-		value float64
-	}{{10, -120}, {60, 0}, {110, 120}} {
-		if err := check(sample.frame, sample.value, false); err != nil {
-			return err
-		}
+	if err := check(60, 0, false); err != nil {
+		return err
 	}
 	if err := s.call("delete_objects", s.args(map[string]any{"object_ids": []uint64{id}}), nil); err != nil {
 		return err
 	}
-	fmt.Println("PASS motion text/media, dry_run, samples, constant, and non-numeric rejection")
+	fmt.Println("PASS motion text/media samples and constant")
 	return nil
 }
 

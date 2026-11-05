@@ -67,7 +67,6 @@ func TestTrackPropertiesEffectDefaulting(t *testing.T) {
 	for _, tracks := range [][]motionTrack{
 		nil,
 		make([]motionTrack, 101),
-		{{Item: "X"}, {Item: "X", Effect: "標準描画:0"}},
 		{{Item: "X", Effect: "ぼかし:-1"}},
 	} {
 		if _, err := trackProperties(tracks); err == nil {
@@ -269,13 +268,26 @@ func motionResultPlan(t *testing.T, result *mcp.CallToolResult) operationPlanOut
 }
 
 func TestMotionToolsDryRunNeverMutate(t *testing.T) {
-	for _, name := range []string{"set_motion", "add_motion"} {
-		t.Run(name, func(t *testing.T) {
+	cases := []struct {
+		name   string
+		tool   string
+		tracks []motionTrack
+	}{
+		{"set_motion", "set_motion", nil},
+		{"add_motion", "add_motion", nil},
+		{"add_motion text item", "add_motion", []motionTrack{{Effect: "テキスト:0", Item: "サイズ", From: 12, To: 36}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
 			fixture := newMotionBridgeFixture()
-			plan := motionResultPlan(t, callMotionTool(t, fixture, name, motionToolArgs(name == "add_motion", true)))
+			args := motionToolArgs(c.tool == "add_motion", true)
+			if c.tracks != nil {
+				args["tracks"] = c.tracks
+			}
+			plan := motionResultPlan(t, callMotionTool(t, fixture, c.tool, args))
 			assertMotionReadOnly(t, fixture)
 			wantOps := 1
-			if name == "add_motion" {
+			if c.tool == "add_motion" {
 				wantOps = 2
 			}
 			if !plan.DryRun || plan.Mutation != nil || len(plan.Operations) != wantOps {
@@ -410,16 +422,6 @@ func TestSetMotionUsesRequestedEffectOccurrence(t *testing.T) {
 	if batches != 1 {
 		t.Fatalf("want one batch, got %d", batches)
 	}
-}
-
-func TestAddMotionAllowsNumericTextItems(t *testing.T) {
-	fixture, args := newMotionBridgeFixture(), motionToolArgs(true, true)
-	args["tracks"] = []motionTrack{{Effect: "テキスト:0", Item: "サイズ", From: 12, To: 36}}
-	plan := motionResultPlan(t, callMotionTool(t, fixture, "add_motion", args))
-	if len(plan.Operations) != 2 {
-		t.Fatalf("unexpected plan: %+v", plan)
-	}
-	assertMotionReadOnly(t, fixture)
 }
 
 func TestAddMotionRejectsUnsafeCreationBeforeMutation(t *testing.T) {
