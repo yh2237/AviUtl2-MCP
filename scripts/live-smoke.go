@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/png"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,6 +200,9 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 	if err := s.call("render_preview", map[string]any{"frame": 0, "max_width": 320, "max_height": 180}, nil); err != nil {
 		return err
 	}
+	if err := s.motions(dir); err != nil {
+		return err
+	}
 	mainScene := s.current.SceneID
 	var scenes protocol.ScenesResult
 	if err := s.call("scenes", s.args(map[string]any{"operation": "create", "name": "MCP smoke sub", "label": "MCP test"}), &scenes); err != nil {
@@ -300,6 +306,123 @@ func (s *smoke) edits(dir, outputPlugin string) (returnErr error) {
 		}
 	}
 	fmt.Println("EDIT SMOKE PASSED; restoring original snapshot")
+	return nil
+}
+
+// motions runs inside the disposable project created by edits, before restore.
+func (s *smoke) motions(dir string) error {
+	track := map[string]any{"item": "X", "from": -120, "to": 120, "mode": "linear"}
+	args := s.args(map[string]any{"text": "Motion", "layer": 1, "frame": 10, "length": 101, "tracks": []any{track}, "dry_run": true})
+	var before, after protocol.SceneOverview
+	if err := s.call("inspect_scene", map[string]any{}, &before); err != nil {
+		return err
+	}
+	if err := s.call("add_motion", args, nil); err != nil {
+		return err
+	}
+	if err := s.call("inspect_scene", map[string]any{}, &after); err != nil {
+		return err
+	}
+	if before.Scene.ObjectCount != after.Scene.ObjectCount {
+		return fmt.Errorf("add_motion dry_run created an object")
+	}
+	args["dry_run"] = false
+	var added struct {
+		Mutation *protocol.MutationResult `json:"mutation"`
+	}
+	if err := s.call("add_motion", args, &added); err != nil {
+		return err
+	}
+	if added.Mutation == nil || len(added.Mutation.Results) != 2 || added.Mutation.Results[0].ObjectID == nil {
+		return fmt.Errorf("add_motion did not return the two-operation result")
+	}
+	s.current = added.Mutation.Context
+	id := *added.Mutation.Results[0].ObjectID
+	check := func(frame int, want float64, constant bool) error {
+		var out struct {
+			Values protocol.ObjectValuesResult `json:"values"`
+		}
+		if err := s.call("inspect_object_values", map[string]any{"object_id": id, "effect": "標準描画", "items": []string{"X"}, "frame": frame}, &out); err != nil {
+			return err
+		}
+		if len(out.Values.Effects) != 1 || len(out.Values.Effects[0].Items) != 1 {
+			return fmt.Errorf("motion track was not returned")
+		}
+		item := out.Values.Effects[0].Items[0]
+		if item.SampledValue == nil || math.Abs(*item.SampledValue-want) > 0.001 || item.Track == nil || (constant && item.Track.Mode != "") {
+			return fmt.Errorf("motion sample at %d: %+v, want %g (constant=%v)", frame, item, want, constant)
+		}
+		fmt.Printf("PASS motion frame=%d value=%g\n", frame, *item.SampledValue)
+		return nil
+	}
+	for _, sample := range []struct {
+		frame int
+		value float64
+	}{{10, -120}, {60, 0}, {110, 120}} {
+		if err := check(sample.frame, sample.value, false); err != nil {
+			return err
+		}
+	}
+	track["from"], track["to"], track["mode"] = 7.25, 7.25, "constant"
+	set := s.args(map[string]any{"object_id": id, "tracks": []any{track}, "dry_run": true})
+	if err := s.call("set_motion", set, nil); err != nil {
+		return err
+	}
+	if err := check(60, 0, false); err != nil {
+		return fmt.Errorf("set_motion dry_run changed the track: %w", err)
+	}
+	set["dry_run"] = false
+	if err := s.call("set_motion", set, nil); err != nil {
+		return err
+	}
+	for _, frame := range []int{10, 60, 110} {
+		if err := check(frame, 7.25, true); err != nil {
+			return err
+		}
+	}
+	bad := s.args(map[string]any{"object_id": id, "tracks": []any{map[string]any{"effect": "テキスト", "item": "テキスト", "from": 0, "to": 1}}})
+	result, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{Name: "set_motion", Arguments: bad})
+	if err != nil || !result.IsError {
+		return fmt.Errorf("non-numeric motion item was not rejected: %v", err)
+	}
+	if err := s.call("delete_objects", s.args(map[string]any{"object_ids": []uint64{id}}), nil); err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, "aviutl2-motion-*.png")
+	if err != nil {
+		return err
+	}
+	encodeErr := png.Encode(file, image.NewRGBA(image.Rect(0, 0, 16, 16)))
+	closeErr := file.Close()
+	if encodeErr != nil {
+		return encodeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	track["from"], track["to"], track["mode"] = -120, 120, "linear"
+	args = s.args(map[string]any{"file": file.Name(), "layer": 1, "frame": 10, "length": 101, "tracks": []any{track}})
+	added.Mutation = nil
+	if err := s.call("add_motion", args, &added); err != nil {
+		return err
+	}
+	if added.Mutation == nil || len(added.Mutation.Results) != 2 || added.Mutation.Results[0].ObjectID == nil {
+		return fmt.Errorf("media add_motion did not return an object ID")
+	}
+	s.current = added.Mutation.Context
+	id = *added.Mutation.Results[0].ObjectID
+	for _, sample := range []struct {
+		frame int
+		value float64
+	}{{10, -120}, {60, 0}, {110, 120}} {
+		if err := check(sample.frame, sample.value, false); err != nil {
+			return err
+		}
+	}
+	if err := s.call("delete_objects", s.args(map[string]any{"object_ids": []uint64{id}}), nil); err != nil {
+		return err
+	}
+	fmt.Println("PASS motion text/media, dry_run, samples, constant, and non-numeric rejection")
 	return nil
 }
 

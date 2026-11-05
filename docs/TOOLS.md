@@ -56,6 +56,23 @@
 - `bpm_grid`: `operation`で切り替える。`get`は取得、`set`は先頭テンポの設定、`set_list`は可変BPM全体の置き換え
 - `set_scene_settings`: シーン名、解像度、フレームレート、サンプルレートを変更する。シーン設定はUndoできない
 
+## モーション
+
+- `set_motion`: 既存objectの数値トラックを1Undoで設定する。中間点のあるobjectは拒否する
+- `add_motion`: モーション付きの画像・動画・テキストを1つ作る。画像・動画は`標準描画`、テキストは`標準描画`と`テキスト`の数値項目に対応する。音声のみの素材や、追加エフェクトは対象外
+
+どちらも`tracks`と変更用コンテキストを渡す。`dry_run`は作成・変更せずに検査する。エフェクトの追加が必要なら先に`edit_effect`で追加し、`set_motion`を使う。
+
+```json
+{"item":"X","from":-300,"to":300,"mode":"linear"}
+```
+
+各トラックの`effect`は省略時`標準描画`。`mode`は`linear`（既定）、`smooth`、`instant`、`random`、`constant`。`constant`は`from`と`to`を同じ値にする。`random`は2値を範囲として使い、終了値への到達は保証しない。
+
+移動には実機で確認した`開始値,終了値,移動モード名,0`を生成し、一定値には数値だけを渡す。SDKが保証するトラック書式ではないため、評価は`inspect_object_values`の`sampled_value`で確認する。補間曲線は本体に任せ、特定のイージング曲線は保証しない。既存の中間点や加減速設定を保つ場合は、取得済みのraw値を`set_track_values`で書き戻す。
+
+`add_motion`は作成と設定を1つのbatchで実行するが、トランザクションではない。本体が途中で拒否した場合、作成済みのobjectは残ることがある。
+
 ## シーン・プロジェクト・出力
 
 - `scenes`: `operation`で切り替える。`list`は一覧、`select`は切替、`create`は作成して切替。切替と作成の後はobject IDが失効する

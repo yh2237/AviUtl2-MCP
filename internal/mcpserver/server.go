@@ -611,6 +611,7 @@ func New(client *bridge.Client, version string) *mcp.Server {
 	addMediaTools(server, client)
 	addVisualTools(server, client)
 	addOrganizationTools(server, client)
+	addMotionTools(server, client)
 	addWorkspaceTools(server, client)
 
 	return server
